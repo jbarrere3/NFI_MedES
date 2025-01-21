@@ -46,6 +46,8 @@ list(
   tar_target(FrenchNFI_species, fread(files[grep("espar", files)])), 
   
   # Format data
-  tar_target(NFIMed_plot, format_plot(FrenchNFI_plot_raw))
+  tar_target(NFIMed_plot, format_plot(FrenchNFI_plot_raw)), 
+  tar_target(NFIMed_tree, format_tree(NFIMed_plot, FrenchNFI_tree_raw, FrenchNFI_species)), 
+  tar_target(NFIMed_flora, format_flora(NFIMed_plot, FrenchNFI_flora_raw))
   
 )
