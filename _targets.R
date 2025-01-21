@@ -21,7 +21,8 @@ library(targets)
 # Load functions
 lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("R", x)))
 # install if needed and load packages
-packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", "sp")
+packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
+                 "sp", "sf")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -40,6 +41,11 @@ list(
   # Load raw data
   tar_target(FrenchNFI_tree_raw, fread(files[grep("ARBRE", files)])), 
   tar_target(FrenchNFI_plot_raw, fread(files[grep("PLACETTE", files)])), 
-  tar_target(FrenchNFI_species, fread("data/FrenchNFI_species.csv")) 
+  tar_target(FrenchNFI_deadwood_raw, fread(files[grep("BOIS_MORT", files)])), 
+  tar_target(FrenchNFI_flora_raw, fread(files[grep("FLORE", files)])), 
+  tar_target(FrenchNFI_species, fread(files[grep("espar", files)])), 
+  
+  # Format data
+  tar_target(NFIMed_plot, format_plot(FrenchNFI_plot_raw))
   
 )

@@ -88,6 +88,35 @@ get_FrenchNFI <- function(){
 }
 
 
+
+#' Function to extract basic plot-level information for all plots in study area
+#' @param FrenchNFI_plot_raw Plot level raw data from NFI
+format_plot = function(FrenchNFI_plot_raw){
+  
+  FrenchNFI_plot_raw %>%
+    # Only keep first census
+    filter(VISITE == 1) %>%
+    # Filter ecological regions
+    filter(SER %in% c("J10", "J21", "J22", "J23", "J24", 
+                      "J30", "J40", "K11", "K12", "K12")) %>%
+    # change coordinates
+    st_as_sf(coords = c("XL", "YL"), crs = 2154, agr = "constant") %>%
+    st_transform(crs = 4326) %>% 
+    mutate(longitude = st_coordinates(.)[,1],
+           latitude = st_coordinates(.)[,2])  %>%
+    st_drop_geometry() %>%
+    # Select columns
+    select(IDP, year = CAMPAGNE, longitude, latitude, ecoregion = SER) 
+  
+}
+
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### -- Archives ------------------
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
 #' Format the raw FrenchNFI data
 #' @author Natheo BEAUCHAMP (rearranged by Julien BARRERE)
 #' @param FrenchNFI_tree_raw Raw french NFI tree table
