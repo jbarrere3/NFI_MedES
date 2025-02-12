@@ -66,13 +66,13 @@ create_dir_if_needed <- function(file.in){
 #' @param file.in Name (and path) of the file on the disk
 write_on_disk <- function(table.in, file.in){
   create_dir_if_needed(file.in)
-  write.table(table.in, file = file.in, row.names = F)
+  write.table(table.in, file = file.in, row.names = F, sep = ",")
   return(file.in)
 }
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-#### -- Data extraction and formatting ------------------
+#### -- Extraction and formatting of raw data ------------------
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
@@ -164,11 +164,134 @@ format_flora = function(NFIMed_plot, FrenchNFI_flora_raw){
     # Add species code
     left_join((data_species %>% mutate(CD_REF = as.integer(CD_REF))), by = "CD_REF") %>%
     # Keep columns of interest
-    select(IDP, species, abundance = ABOND) 
+    select(IDP, species, abundance = ABOND) %>%
+    # Format abundance
+    mutate(cover.min = case_when(abundance %in% c(1, 2) ~ 0, 
+                                 abundance == 3 ~ 25, 
+                                 abundance == 4 ~  50, 
+                                 abundance == 5 ~ 75), 
+           cover.max = case_when(abundance == 1 ~ 5, 
+                                 abundance == 2 ~ 25, 
+                                 abundance == 3 ~ 50, 
+                                 abundance == 4 ~ 75, 
+                                 abundance == 5 ~ 100), 
+           cover.mean = (cover.min + cover.max)/2)
   
   # return output
   return(out)
 }
 
 
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### -- Manage floristic metrics ------------------
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
+#' Function to build a list of flora species with taxonomic details
+#' @param NFIMed_flora Formatted flora data
+make_flora.species.list = function(NFIMed_flora){
+  
+  # List all the species present
+  list.species = unique(arrange(NFIMed_flora, species)$species)
+  
+  # Initialize the output dataframe
+  data.species = data.frame(species.or = list.species) %>%
+    mutate(species.full = NA_character_, 
+           species = NA_character_) 
+  
+  # Loop on all species
+  for(i in 1:length(list.species)){
+    print(paste0("(", i, " / ", length(list.species), ") : ", list.species[i]))
+    # Extract the ful name of the species
+    name.i = list.species[i]
+    # Split the full name in parts
+    split.i = str_split(name.i, " ")[[1]]
+    # Try to match directly the full name
+    verified_i = try(expr = gna_verifier(list.species[i]), silent = TRUE)
+    # If it works, add species name directly from the match
+    if(!(any(class(verified_i) == "try-error"))){
+      # Extract the name of the species
+      data.species$species.full[i] = verified_i$matchedCanonicalSimple[1]
+      # Add without the sub species
+      if(length(str_split(data.species$species.full[i], " ")[[1]]) > 1){
+        data.species$species[i] = paste(str_split(
+        data.species$species.full[i], " ")[[1]][1:2], collapse = " ")
+      }
+    } else {
+      # Otherwise, try by splitting directly the name of the species
+      if(length(split.i) > 3){
+        verified_i = try(expr = gna_verifier(paste(split.i[1:2], collapse = " ")), silent = TRUE)
+        # If it works, add species name directly from the match
+        if(!(any(class(verified_i) == "try-error"))){
+          # Extract the name of the species
+          data.species$species.full[i] = verified_i$matchedCanonicalSimple[1]
+          # Add without the sub species
+          if(length(str_split(data.species$species.full[i], " ")[[1]]) > 1)
+          data.species$species[i] = paste(str_split(
+            data.species$species.full[i], " ")[[1]][1:2], collapse = " ")
+        } 
+      }
+    }
+    
+  }
+  
+  # Return the output data frame
+  return(data.species)
+  
+}
+
+
+#' Function to export a csv with flora genus and species
+#' @param flora.species.list list of floristic species with taxonomy
+#' @param file.out Name of the file to export, including path
+export_flora.species = function(flora.species.list, file.out){
+  
+  # Format species list
+  out = flora.species.list %>%
+    # Remove species for which we don't have the full species name
+    drop_na() %>%
+    # Separate genus and species
+    mutate(genus = gsub("\\ .+", "", species), 
+           sp = gsub(".+\\ ", "", species)) %>%
+    # Only keep the columns of interest
+    select(genus, species = sp)
+  
+  # Export the generated dataset and return the file name
+  return(write_on_disk(out, file.out))
+  
+} 
+
+
+#' Function to extract the edibility and medicinal use of plant species from PFAF
+#' @param flora.species_file csv file containing the name of flora species
+#' @param flora.species_file.out csv file to export
+get_pfaf_file = function(flora.species_file, flora.species_file.out){
+  
+  # Launch python script
+  system(paste0("python3 Python/scrape_pfaf.py ", flora.species_file, 
+                " ", flora.species_file.out), wait = TRUE)
+  
+  # Return the output
+  return(flora.species_file.out)
+} 
+
+#' Function to add medicinal and edibility score to the species data base
+#' @param flora.species.list Data frame listing species with taxonomic info
+#' @param flora.species.with.score_file species score of medicinal and edibility
+merge_species_scores = function(flora.species.list, flora.species.with.score_file){
+  
+  # Format the edibility and medicinal metrics
+  flora.species.with.score = fread(flora.species.with.score_file) %>%
+    mutate(sp = paste(genus, species, sep = " "), 
+           edibility = as.numeric(substr(edibility_score, 2, 2)), 
+           medicinal = as.numeric(substr(medicinal_score, 2, 2))) %>%
+    select(species = sp, edibility, medicinal)
+  
+  # Join to the species list
+  out = flora.species.list %>%
+    left_join(flora.species.with.score, by = "species")
+  
+  # Return output
+  return(out)
+  
+}

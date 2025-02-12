@@ -22,7 +22,7 @@ library(targets)
 lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("R", x)))
 # install if needed and load packages
 packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
-                 "sp", "sf")
+                 "sp", "sf", "stringr", "taxize")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -45,9 +45,22 @@ list(
   tar_target(FrenchNFI_flora_raw, fread(files[grep("FLORE", files)])), 
   tar_target(FrenchNFI_species, fread(files[grep("espar", files)])), 
   
-  # Format data
+  # Format raw data
   tar_target(NFIMed_plot, format_plot(FrenchNFI_plot_raw)), 
   tar_target(NFIMed_tree, format_tree(NFIMed_plot, FrenchNFI_tree_raw, FrenchNFI_species)), 
-  tar_target(NFIMed_flora, format_flora(NFIMed_plot, FrenchNFI_flora_raw))
+  tar_target(NFIMed_flora, format_flora(NFIMed_plot, FrenchNFI_flora_raw)), 
+  
+  # Get information on floristic data
+  # - Make a vector of all species present
+  tar_target(flora.species.list, make_flora.species.list(NFIMed_flora)), 
+  # - Get the full taxonomic information from the plant list
+  tar_target(flora.species_file, export_flora.species(
+    flora.species.list, "export/flora_species.csv"), format = "file"), 
+  # - Extract edibility score and medical use from the PFAF database
+  tar_target(flora.species.with.score_file, get_pfaf_file(
+    flora.species_file, "export/flora_species_with_scores.csv")), 
+  # - Add edibility and medicinal score to the species list
+  tar_target(flora.species.with.score, merge_species_scores(
+    flora.species.list, flora.species.with.score_file))
   
 )
