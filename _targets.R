@@ -22,7 +22,8 @@ library(targets)
 lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("R", x)))
 # install if needed and load packages
 packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
-                 "sp", "sf", "stringr", "taxize")
+                 "sp", "sf", "stringr", "taxize", "rnaturalearth", 
+                 "rnaturalearthdata", "cowplot")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -61,6 +62,18 @@ list(
     flora.species_file, "export/flora_species_with_scores.csv")), 
   # - Add edibility and medicinal score to the species list
   tar_target(flora.species.with.score, merge_species_scores(
-    flora.species.list, flora.species.with.score_file))
+    flora.species.list, flora.species.with.score_file)), 
+  
+  # Calculate plot-level ecosystem services
+  tar_target(services_flora, get_services_flora(
+    NFIMed_flora, flora.species.with.score)), 
+  
+  # Plot the data
+  tar_target(fig_temporal_flora, plot_temporal_flora_services(
+    NFIMed_plot, services_flora, "export/fig/fig_temporal_flora.jpg"), 
+    format = "file"), 
+  tar_target(fig_spatial_flora, plot_spatial_flora_services(
+    NFIMed_plot, services_flora, "export/fig/fig_spatial_flora.jpg"), 
+    format = "file")
   
 )

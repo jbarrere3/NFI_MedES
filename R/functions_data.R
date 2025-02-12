@@ -295,3 +295,45 @@ merge_species_scores = function(flora.species.list, flora.species.with.score_fil
   return(out)
   
 }
+
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### -- Calculate services ------------------
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+#' Function to calculate services related to floristic data
+#' @param NFIMed_flora floristic data at plot level
+#' @param flora.species.with.score species-level data on edibility and medicinal use
+get_services_flora = function(NFIMed_flora, flora.species.with.score){
+  
+  # Prepare data before plot-level calculation
+  data = NFIMed_flora %>%
+    # Add edibility and medicinal use
+    left_join(flora.species.with.score %>%
+                select(species = species.or, edibility, medicinal) %>%
+                group_by(species) %>%
+                summarize(edibility = mean(edibility, na.rm = TRUE), 
+                          medicinal = mean(medicinal, na.rm = TRUE)) %>%
+                ungroup(), by = "species") %>%
+    # Replace NAs by 0s and normalize between 0 and 1
+    mutate(edibility = ifelse(is.na(edibility), 0, edibility)/5, 
+           medicinal = ifelse(is.na(medicinal), 0, medicinal)/5, 
+           cover.mean = cover.mean/100) %>%
+    # Only keep columns of interest
+    select(IDP, species, abundance = cover.mean, edibility, medicinal)
+  
+  # Plot level calculation of medicinal and edible abundance, and shannon index
+  out = data %>%
+    group_by(IDP) %>%
+    mutate(inv.med = 1 - abundance*medicinal, 
+           inv.edi = 1 - abundance*edibility, 
+           p = abundance/sum(abundance), 
+           plnp = p*log(p)) %>%
+    summarize(ab.medicinal = 1 - prod(inv.med), 
+              ab.edibility = 1 - prod(inv.edi), 
+              shannon = -sum(plnp))
+  
+  # Return output
+  return(out)
+}
