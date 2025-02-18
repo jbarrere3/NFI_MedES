@@ -133,7 +133,9 @@ format_tree = function(NFIMed_plot, FrenchNFI_tree_raw, FrenchNFI_species){
                               VEGET %in% c("1", "2", "5", "A", "C", "M", "T") ~ "dead",
                               VEGET == "N" ~ "lost")) %>%
     # Keep columns of interest
-    select(IDT = A, IDP, ESPAR, species, status, dbh, ba, weight = W) %>%
+    select(IDT = A, IDP, ESPAR, species, status, dbh, ba, height = HTOT, 
+           height.cut = HDEC, age = AGE, age.130 = AGE13, trunk.length = LFSD, 
+           volume = V, weight = W) %>%
     filter(!is.na(dbh))
   
 }
@@ -296,6 +298,58 @@ merge_species_scores = function(flora.species.list, flora.species.with.score_fil
   
 }
 
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### -- Manage tree metrics ------------------
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+#' Function to extract the family and group of each tree species
+#' @param NFIMed_tree Tree-level formatted NFI data
+#' @param WorldFlora_file file of the WorldFlora database
+get_info_species.tree = function(NFIMed_tree, WorldFlora_file){
+  
+  # Load database relating families to groups
+  data(vascular.families)
+  
+  # Read WorldFlora database
+  WFO.data = data.table::fread(WorldFlora_file)
+  
+  # Format species name and extract genus
+  species.data = data.frame(species.original = unique(NFIMed_tree$species)) %>%
+    drop_na() %>%
+    mutate(species = species.original) %>%
+    separate(species, sep = "\\ ", into = c("genus", "species", "adv", "subsp")) %>%
+    mutate(species.true = case_when(
+      is.na(species) ~ paste0(genus, " sp"), 
+      species == "x" ~ paste(genus, adv, sep = " "), 
+      TRUE ~ paste(genus, species, sep = " "))) %>%
+    select(species.original, genus, species = species.true) %>%
+    arrange(species) 
+  
+  # Connect using WorldFlora the genus to the family and the group
+  genus.family = species.data %>%
+    left_join((WFO.data %>% filter(taxonRank == "species") %>% 
+                 select(species = scientificName, family) %>%
+                 rbind(data.frame(species = 'Laburnum anagyroides', 
+                                  family = "Fabaceae"))), 
+              by = "species") %>%
+    select(genus, family) %>%
+    drop_na() %>%
+    distinct() %>%
+    left_join((vascular.families %>%
+                 dplyr::select(family = Family, group = Group) %>%
+                 rbind(data.frame(family = c("Viburnaceae", "Cephalotaxaceae"), 
+                                  group = c("angiosperms", "gymnosperms")))), 
+              by = "family")
+  
+  # Connect the two datasets
+  out = species.data %>%
+    left_join(genus.family, by = "genus")
+  
+  # Return the output
+  return(out)
+  
+}
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%

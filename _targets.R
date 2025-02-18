@@ -22,7 +22,7 @@ library(targets)
 lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("R", x)))
 # install if needed and load packages
 packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
-                 "sp", "sf", "stringr", "taxize", "rnaturalearth", 
+                 "sp", "sf", "stringr", "taxize", "rnaturalearth", "WorldFlora",
                  "rnaturalearthdata", "cowplot")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
@@ -63,6 +63,14 @@ list(
   # - Add edibility and medicinal score to the species list
   tar_target(flora.species.with.score, merge_species_scores(
     flora.species.list, flora.species.with.score_file)), 
+  
+  # Get more information on tree data
+  # - File of the WorldFlora database
+  tar_target(WorldFlora_file, "data/WorldFlora/classification.csv", format = "file"), 
+  # - Get information on the group and family of each species
+  tar_target(tree.species_info, get_info_species.tree(
+    NFIMed_tree, WorldFlora_file)),
+  
   
   # Calculate plot-level ecosystem services
   tar_target(services_flora, get_services_flora(
