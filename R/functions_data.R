@@ -391,3 +391,196 @@ get_services_flora = function(NFIMed_flora, flora.species.with.score){
   # Return output
   return(out)
 }
+
+
+#' Calculate services from tree data
+#' @param NFIMed_tree tree-level formatted NFI data
+#' @param FrenchNFI_species correspondance btw species name and code
+#' @param coef_allometry_file file containing allometry coefficients from Savine et al. (in prep)
+#' @param coef_volume_file file containing tree volume coefficients from Deleuze et al. 2014
+#' @param wood.density_file file containing tree density from XyloDensMap (Leban et al.)
+#' @param tree.species_info tree-level taxonomic information
+#' @param FrenchNFI_plot_raw raw plot-level NFI data
+get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file, 
+                             coef_volume_file, wood.density_file, tree.species_info, 
+                             FrenchNFI_plot_raw){
+  
+  # Process allometry data
+  # - Indicate whether each plot is regular or irregular
+  plot_structure = FrenchNFI_plot_raw %>%
+    filter(VISITE == 1) %>%
+    filter(IDP %in% NFIMed_tree$IDP) %>%
+    # Unify codes to the codes of SFO
+    mutate(sver_sfo = case_when(
+      !is.na(SFO) ~ SFO, 
+      is.na(SFO) & SVER %in% c("2", "6") ~ 1, 
+      is.na(SFO) & SVER == "4" ~ 2, 
+      is.na(SFO) & SVER == "5" ~ 3, 
+      is.na(SFO) & SVER == "3" ~ 4, 
+      is.na(SFO) & SVER %in% c("", "0", "X") ~ 0, 
+      TRUE ~ NA)) %>%
+    # Attribute structure based on the unified codification
+    mutate(str = case_when(
+      sver_sfo == 1 ~ "even", # even-aged (FR in original script)
+      sver_sfo == 2 ~ "uneven", # uneven-aged (FI in original script)
+      sver_sfo == 3 ~ "copfor", # coppice high forest (FT in original script) 
+      sver_sfo == 4 ~ "cop", # coppice (T in original script)
+      sver_sfo == 0 ~ "nostr", # no structure (PS in original script)
+      TRUE ~ NA)) %>%
+    select(IDP, str) %>%
+    distinct()
+  # - Read and process raw data
+  coef_allometry_raw = fread(coef_allometry_file) %>%
+    # Remove 0 in one letter codes
+    mutate(espar = ifelse(espar %in% paste0("0", c(1:9)), 
+                          gsub("0", "", espar), espar))
+  # - Format species data to add allometry coefficients
+  coef_allometry_per_species = tree.species_info %>%
+    # Add species code 
+    left_join((FrenchNFI_species %>%
+                 select(`species.original` = `lib_cdref`, 
+                        `espar` = `// espar`)), 
+              by = "species.original") %>%
+    # Attribute the code of beech when parameters are unknown (/!\ TO CHANGE LATER)
+    mutate(espar = ifelse(espar %in% coef_allometry_raw$espar, espar, "9")) %>%
+    # Join coefficients 
+    left_join(coef_allometry_raw, by = "espar") %>%
+    # Only keep columns of interest
+    select(species = species.original, a1, a2, a3, a4, a5, a6, a7, b1, b2, b3, b4, b5, d1) %>%
+    replace(is.na(.), 0) %>%
+    distinct
+  
+  # Process volume data
+  # - Read raw volume data
+  coef_volume_raw = fread(coef_volume_file) %>%
+    # Remove 0 in one letter codes
+    mutate(speciesCode = ifelse(speciesCode %in% paste0("0", c(1:9)), 
+                                gsub("0", "", speciesCode), speciesCode))
+  # - Format species data to add volume coefficients
+  coef_volume_per_species = tree.species_info %>%
+    # Add species code 
+    left_join((FrenchNFI_species %>%
+                 select(`species.original` = `lib_cdref`, 
+                        `speciesCode` = `// espar`)), 
+              by = "species.original") %>%
+    # Attribute the code for conifer and deciduous without coefficients
+    mutate(speciesCode = case_when(
+      speciesCode %in% coef_volume_raw$speciesCode ~ speciesCode, 
+      !(speciesCode %in% coef_volume_raw$speciesCode) & group == "gymnosperms" ~ "otherConiferous", 
+      !(speciesCode %in% coef_volume_raw$speciesCode) & group == "angiosperms" ~ "otherDeciduous", 
+      speciesCode == "36" ~ "otherDeciduous", # Eucalyptus
+      TRUE ~ NA)) %>%
+    # Join coefficients 
+    left_join(coef_volume_raw, by = "speciesCode") %>%
+    # Only keep columns of interest
+    select(species = species.original, aEmerge, bEmerge, cEmerge) %>%
+    distinct()
+  
+  # Process wood density data
+  # - Read raw file
+  wood.density_raw = read_xlsx(wood.density_file, sheet = "Wood basic density") %>%
+    select(`species.original` = `156 Species`, `wood.density` = BD) %>%
+    drop_na()
+  # - Join to species table
+  wd_per_species = tree.species_info %>%
+    left_join(wood.density_raw, by = "species.original") %>%
+    # Average across all species 
+    mutate(WD.avg = mean(wood.density, na.rm = TRUE)) %>%
+    # Average by genus
+    group_by(genus) %>%
+    mutate(WD.genus = mean(wood.density, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Attribute averages for NA
+    mutate(wood.density = case_when(
+      is.na(wood.density) & !is.na(WD.genus) ~ WD.genus, 
+      is.na(wood.density) & is.na(WD.genus) ~ WD.avg, 
+      TRUE ~ wood.density)) %>%
+    select(species = species.original, wood.density) %>%
+    distinct()
+  
+  ## - Calculate carbon per tree - ##
+  out = NFIMed_tree %>%
+    
+    # GET TREE HEIGHT FOR ALL INDIVIDUAL TREES
+    # - Add plot structure (regular or irregular)
+    left_join(plot_structure, by = "IDP") %>%
+    # - Add allometry coefficients
+    left_join(coef_allometry_per_species, by = "species") %>%
+    # - Calculate plot quadratic diameter
+    group_by(IDP) %>%
+    mutate(dbh_cm = dbh/10, 
+           dbh2.W_cm = (dbh_cm^2)*weight, 
+           dqm_cm = sqrt(sum(dbh2.W_cm, na.rm = TRUE)/sum(weight, na.rm  = TRUE))) %>%
+    ungroup() %>%
+    # - Calculate tree height from allometric relations
+    mutate(height.allometry = case_when(
+      str == "uneven" ~ 1.3 + a1*(1 + a2)*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b2)*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))), 
+      str %in% c("cop", "nostr") ~ 1.3 + a1*(1 + a4)*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b4)*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))), 
+      str == "copfor" ~ 1.3 + a1*(1 + a3)*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b3)*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))), 
+      str == "even" ~ 1.3 + a1*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))))) %>%
+    # - use allometric height when no observed height
+    mutate(height = ifelse(is.na(height), height.allometry, height)) %>%
+    # - Calculate a rectified height when below 5 meters
+    mutate(height.rectif = ifelse(height < 5, 5, height)) %>%
+    # - Remove residual NAs in plots where there are trees with unknown height or weight
+    group_by(IDP) %>% mutate(anyNA = any(is.na(height)) | any(is.na(weight))) %>% 
+    ungroup() %>% filter(!anyNA) %>%
+    
+    # GET TREE AERIAL VOLUME FROM EMERGE COEFFICIENTS
+    # - join volume coefficients
+    left_join(coef_volume_per_species, by = "species") %>%
+    # - calculate aerial volume based on emerge
+    mutate(c130 = pi*dbh/1000, 
+           volume.emerge = (height*c130^2)/(4*pi*(1-1.3/height.rectif)^2) * (
+             aEmerge + bEmerge*sqrt(c130)/height.rectif + cEmerge*height.rectif/c130)) %>%
+    # - calculate root volume using expansion factor
+    mutate(volume.root = volume*0.29) %>%
+    # - timber volume (merchandable) and total volume per ha
+    mutate(volume.tot = volume.emerge + volume.root, 
+           volume.ha = volume*weight, 
+           volume.tot.ha = volume.tot*weight) %>%
+    
+    # GET dry mass and thus carbon mass
+    # - join Wood density data
+    left_join(wd_per_species, by = "species") %>%
+    # - Calculate wood mass per ha
+    mutate(mass.tot.ha = wood.density*volume.tot.ha) %>%
+    # - Calculate carbon mass per ha
+    mutate(Cmass.tot.ha = 0.5*mass.tot.ha) %>%
+    # - sum per plot timber volume and carbon mass
+    group_by(IDP) %>%
+    summarize(timber.volume_m3.ha = sum(volume.ha, na.rm = TRUE), 
+              Cmass_kg.ha = sum(Cmass.tot.ha, na.rm = TRUE))
+  
+  # Return output
+  return(out)
+  
+}
+
+#' Function to merge service data associated with different sources
+#' @param list.in list of dataframe contianing plot-level services data
+merge_service = function(list.in){
+  
+  # Loop on all source of services
+  for(i in 1:length(names(list.in))){
+    
+    # Format data from source i
+    data.i = list.in[[i]] %>%
+      gather(key = "service", value = "service.value", colnames(.)[2:dim(.)[2]])
+    
+    # Compile into final dataset
+    if(i == 1) data = data.i
+    else data = rbind(data, data.i)
+  }
+  
+  # Format into one dataframe with one service per column
+  out = data %>% spread(key = "service", value = "service.value")
+  
+  # Return output dataframe
+  return(out)
+  
+}

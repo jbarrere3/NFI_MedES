@@ -23,7 +23,7 @@ lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("
 # install if needed and load packages
 packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
                  "sp", "sf", "stringr", "taxize", "rnaturalearth", "WorldFlora",
-                 "rnaturalearthdata", "cowplot")
+                 "rnaturalearthdata", "cowplot", "readxl")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -70,18 +70,36 @@ list(
   # - Get information on the group and family of each species
   tar_target(tree.species_info, get_info_species.tree(
     NFIMed_tree, WorldFlora_file)),
+  # - Files necessary for carbon and timber calculation
+  tar_target(coef_allometry_file, "data/Carbon/recap.csv", format = "file"), 
+  tar_target(coef_volume_file, "data/Carbon/CoefficientsEmerge.csv", format = "file"),
+  tar_target(wood.density_file, "data/Carbon/WOODBASICDENSITYFOR156TREEFORESTSPECIES-11-04-2022.xlsx", 
+             format = "file"),
   
   
   # Calculate plot-level ecosystem services
+  # - from floristic data
   tar_target(services_flora, get_services_flora(
     NFIMed_flora, flora.species.with.score)), 
+  # - from tree-level data
+  tar_target(services_tree, get_services_tree(
+    NFIMed_tree, FrenchNFI_species, coef_allometry_file,  coef_volume_file,
+    wood.density_file, tree.species_info, FrenchNFI_plot_raw)),
+  # - merge data together
+  tar_target(data_services, merge_service(list(flora = services_flora, 
+                                               tree = services_tree))),
+  # - table with the list and title of each service
+  tar_target(service_table, data.frame(
+    service = c("shannon", "ab.medicinal", "ab.edibility", "Cmass_kg.ha", "timber.volume_m3.ha"), 
+    title = c("Floristic diversity", "Abundance of\nmedicinal plants", 
+              "Abundance of\nedible plants", "Carbon stored", "Timber volume"))),
   
   # Plot the data
-  tar_target(fig_temporal_flora, plot_temporal_flora_services(
-    NFIMed_plot, services_flora, "export/fig/fig_temporal_flora.jpg"), 
-    format = "file"), 
-  tar_target(fig_spatial_flora, plot_spatial_flora_services(
-    NFIMed_plot, services_flora, "export/fig/fig_spatial_flora.jpg"), 
+  tar_target(fig_temporal, plot_temporal_services(
+    NFIMed_plot, data_services, service_table, "export/fig/fig_temporal.jpg"), 
+    format = "file"),
+  tar_target(fig_spatial, plot_spatial_services(
+    NFIMed_plot, data_services, service_table, "export/fig/fig_spatial.jpg"),
     format = "file")
   
 )
