@@ -96,9 +96,9 @@ format_plot = function(FrenchNFI_plot_raw){
   FrenchNFI_plot_raw %>%
     # Only keep first census
     filter(VISITE == 1) %>%
-    # Filter ecological regions
-    filter(SER %in% c("J10", "J21", "J22", "J23", "J24", 
-                      "J30", "J40", "K11", "K12", "K12")) %>%
+    # # Filter ecological regions
+    # filter(SER %in% c("J10", "J21", "J22", "J23", "J24", 
+    #                   "J30", "J40", "K11", "K12", "K12")) %>%
     # change coordinates
     st_as_sf(coords = c("XL", "YL"), crs = 2154, agr = "constant") %>%
     st_transform(crs = 4326) %>% 
@@ -212,12 +212,15 @@ make_flora.species.list = function(NFIMed_flora){
     verified_i = try(expr = gna_verifier(list.species[i]), silent = TRUE)
     # If it works, add species name directly from the match
     if(!(any(class(verified_i) == "try-error"))){
-      # Extract the name of the species
-      data.species$species.full[i] = verified_i$matchedCanonicalSimple[1]
-      # Add without the sub species
-      if(length(str_split(data.species$species.full[i], " ")[[1]]) > 1){
-        data.species$species[i] = paste(str_split(
-        data.species$species.full[i], " ")[[1]][1:2], collapse = " ")
+      # Verify that the dataframe is not null
+      if(dim(verified_i)[1] > 0){
+        # Extract the name of the species
+        data.species$species.full[i] = verified_i$matchedCanonicalSimple[1]
+        # Add without the sub species
+        if(length(str_split(data.species$species.full[i], " ")[[1]]) > 1){
+          data.species$species[i] = paste(str_split(
+            data.species$species.full[i], " ")[[1]][1:2], collapse = " ")
+        }
       }
     } else {
       # Otherwise, try by splitting directly the name of the species
@@ -225,13 +228,16 @@ make_flora.species.list = function(NFIMed_flora){
         verified_i = try(expr = gna_verifier(paste(split.i[1:2], collapse = " ")), silent = TRUE)
         # If it works, add species name directly from the match
         if(!(any(class(verified_i) == "try-error"))){
-          # Extract the name of the species
-          data.species$species.full[i] = verified_i$matchedCanonicalSimple[1]
-          # Add without the sub species
-          if(length(str_split(data.species$species.full[i], " ")[[1]]) > 1)
-          data.species$species[i] = paste(str_split(
-            data.species$species.full[i], " ")[[1]][1:2], collapse = " ")
-        } 
+          # Verify that the dataframe is not null
+          if(dim(verified_i)[1] > 0){
+            # Extract the name of the species
+            data.species$species.full[i] = verified_i$matchedCanonicalSimple[1]
+            # Add without the sub species
+            if(length(str_split(data.species$species.full[i], " ")[[1]]) > 1)
+              data.species$species[i] = paste(str_split(
+                data.species$species.full[i], " ")[[1]][1:2], collapse = " ")
+          } 
+        }
       }
     }
     

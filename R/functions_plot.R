@@ -75,7 +75,7 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table, file
       geom_sf(data = subset(data_sf, service == service_table$service[i]), 
               aes(color = value), size = 0.0001, shape = 20) +
       scale_color_gradient(low = "red", high = "green") +
-      coord_sf(xlim = c(1, 10), ylim = c(41.2, 45.2)) +
+      coord_sf(xlim = c(-5, 10), ylim = c(41.2, 51.1)) +
       theme(panel.background = element_rect(color = 'black', fill = 'white'), 
             panel.grid = element_blank(), 
             legend.title = element_blank(), 
@@ -85,10 +85,10 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table, file
   }
   
   # Assemble plots
-  plot.out = plot_grid(plotlist = plotlist.out, align = "hv", ncol = 1)
+  plot.out = plot_grid(plotlist = plotlist.out, align = "hv", nrow = 2)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 10, height = 19, 
+  ggsave(file.out, plot.out, width = 25, height = 14, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
