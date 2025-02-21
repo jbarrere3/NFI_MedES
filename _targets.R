@@ -92,7 +92,7 @@ list(
   tar_target(service_table, data.frame(
     service = c("shannon", "ab.medicinal", "ab.edibility", "Cmass_kg.ha", "timber.volume_m3.ha"), 
     title = c("Floristic diversity", "Abundance of\nmedicinal plants", 
-              "Abundance of\nedible plants", "Carbon stored", "Timber volume"))),
+              "Abundance of\nedible plants", "Carbon stored\n(kg.ha)", "Timber volume\n(m3.ha)"))),
   
   # Plot the data
   tar_target(fig_temporal, plot_temporal_services(

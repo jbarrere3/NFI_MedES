@@ -24,20 +24,44 @@ plot_temporal_services = function(NFIMed_plot, data_services, service_table, fil
   
   # Make the plot
   plot.out = NFIMed_plot %>%
-    select(IDP, year) %>%
+    mutate(biome = case_when(
+      ecoregion %in% c("J10", "J21", "J22", "J23", "J24", "J30", 
+                       "J40", "K11", "K13") ~ "mediterranean_forest", 
+      ecoregion %in% c("D12", "D11", "E10", "E20", "G30", "G22", "G42", "G70", 
+                       "I11", "I12", "I13", "I21", "I22", "K12", "H10", "H21", 
+                       "H22", "H30", "H41", "H42") ~ "temperate_mountain_forest", 
+      TRUE ~ "temperate_plain_forest"
+    )) %>%
+    select(IDP, year, biome) %>%
     left_join(data_services, by = "IDP") %>%
     gather(key = "service", value = "value", service_table$service) %>%
     left_join(service_table, by = "service") %>%
-    group_by(year, title) %>%
+    group_by(year, biome, title) %>%
     summarize(mean = mean(value, na.rm = TRUE), 
-              se = sd(value, na.rm = TRUE)) %>% 
-    ggplot(aes(x = year, y = mean)) + 
-    geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0) + 
-    geom_point() + 
+              lwr = quantile(value, 0.25, na.rm = TRUE), 
+              upr = quantile(value, 0.75, na.rm = TRUE)) %>% 
+    ungroup() %>%
+    mutate(year = case_when(
+      biome == "mediterranean_forest" ~ year + 0.2, 
+      biome == "temperate_mountain_forest" ~ year - 0.2, 
+      TRUE ~ year)) %>%
+    ggplot(aes(x = year, y = mean, color = biome, fill = biome)) + 
+    geom_errorbar(aes(ymin = lwr, ymax = upr), width = 0.15) + 
+    geom_point(shape = 21) + 
     facet_wrap(~ title, scales = "free") + 
     geom_smooth(method = "loess") +
-    theme_bw() + 
-    ylab("Ecosystem services\nvalue")
+    ylab("Ecosystem services value") + 
+    scale_color_manual(values = c(`mediterranean_forest` = "#BB3E03", 
+                                  `temperate_mountain_forest` = "#001D3D", 
+                                  `temperate_plain_forest` = "#386641")) + 
+    scale_fill_manual(values = c(`mediterranean_forest` = "#EE9B00", 
+                                 `temperate_mountain_forest` = "#0077B6", 
+                                 `temperate_plain_forest` = "#A7C957")) + 
+    theme(panel.background = element_rect(fill = "white", color = "black"), 
+          panel.grid = element_blank(), 
+          legend.title = element_blank(), 
+          legend.key = element_blank(), 
+          strip.background = element_blank())
   
   # - Save the plot
   ggsave(file.out, plot.out, width = 19, height = 9, 
