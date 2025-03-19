@@ -23,7 +23,7 @@ lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("
 # install if needed and load packages
 packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
                  "sp", "sf", "stringr", "taxize", "rnaturalearth", "WorldFlora",
-                 "rnaturalearthdata", "cowplot", "readxl")
+                 "rnaturalearthdata", "cowplot", "readxl", "terra")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -59,9 +59,11 @@ list(
   tar_target(K_file, "data/Soil/K_new_crop.tif", format = "file"), 
   # - Annual precipitation from CHELSA portal
   tar_target(chelsa_prec_file, "data/Climate/CHELSA_bio10_12.tif", format = "file"),
+  # - monthly precipitation of wettest month from CHELSA portal
+  tar_target(chelsa_precmax_file, "data/Climate/CHELSA_bio10_13.tif", format = "file"),
   # - Extract climate and soil data for each NFI plot
   tar_target(clim_and_soil, extract_clim_and_soil(
-    NFIMed_plot, LS_file, K_file, chelsa_prec_file)),
+    NFIMed_plot, LS_file, K_file, chelsa_prec_file, chelsa_precmax_file)),
   
   # Get information on floristic data
   # - Make a vector of all species present
@@ -99,14 +101,20 @@ list(
   tar_target(services_tree, get_services_tree(
     NFIMed_tree, FrenchNFI_species, coef_allometry_file,  coef_volume_file,
     wood.density_file, tree.species_info, FrenchNFI_plot_raw)),
+  # - erosion mitigation from ecological data
+  tar_target(services_erosion, get_service_erosion(
+    FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil)),
   # - merge data together
   tar_target(data_services, merge_service(
-    list.in = list(flora = services_flora, tree = services_tree), plots_filtered)),
+    list.in = list(flora = services_flora, tree = services_tree, erosion = services_erosion), 
+    plots_filtered)),
   # - table with the list and title of each service
   tar_target(service_table, data.frame(
-    service = c("ab.medicinal", "ab.edibility", "Cmass_kg.ha", "timber.volume_m3.ha"), 
+    service = c("ab.medicinal", "ab.edibility", "Cmass_kg.ha", 
+                "timber.volume_m3.ha", "erosion.mitig"), 
     title = c("Abundance of\nmedicinal plants",  "Abundance of\nedible plants", 
-              "Carbon stored\n(kg.ha)", "Timber volume\n(m3.ha)"))),
+              "Carbon stored\n(kg.ha)", "Timber volume\n(m3.ha)", 
+              "Erosion mitigation\n(t.ha)"))),
   
   # Plot the data
   tar_target(fig_temporal, plot_temporal_services(

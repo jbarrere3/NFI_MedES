@@ -186,10 +186,19 @@ format_flora = function(NFIMed_plot, FrenchNFI_flora_raw){
 #' Function to remove plots based on outliers or otherr criterias
 #' @param NFIMed_tree Tree data formatted
 filter_plots = function(NFIMed_tree){
-  
-  unique((NFIMed_tree %>%
+   
+  # Filter plots based on different criteria
+  out = unique((NFIMed_tree %>%
+            # We need reliable height values for soil erosion
+            mutate(is.height = ifelse(is.na(height), 0, 1)) %>%
             group_by(IDP) %>%
+            mutate(n.height = sum(is.height, na.rm = TRUE)) %>%
+            filter(n.height > 1) %>%
+            # Remove plots with trees with unrealistic diameters
             filter(!any(dbh > 1300)))$IDP)
+  
+  # Return output
+  return(out)
 }
 
 
@@ -199,31 +208,39 @@ filter_plots = function(NFIMed_tree){
 #' @param LS_file file containing LS-factor raster data
 #' @param K_file file containing K-factor raster data
 #' @param chelsa_prec_file file containing rainfall raster data from CHELSA
-extract_clim_and_soil = function(NFIMed_plot, LS_file, K_file, chelsa_prec_file){
-  
+#' @param chelsa_precmax_file file containing monthly ranfall of wettest month
+extract_clim_and_soil = function(
+    NFIMed_plot, LS_file, K_file, chelsa_prec_file, chelsa_precmax_file){
   # Initialize output
   out = NFIMed_plot
   
   # Extract precipitations
-  # - Read raster of precipitations
+  # - Read raster of annual precipitations and max precipitation
   raster_map = terra::rast(chelsa_prec_file)
+  raster_mapmax = terra::rast(chelsa_precmax_file)
   # - Extract raster values
   out$pr <- as.numeric(terra::extract(
     raster_map, cbind(out$longitude, out$latitude))[, 1])
+  out$prmax <- as.numeric(terra::extract(
+    raster_mapmax, cbind(out$longitude, out$latitude))[, 1])/30
   
-  # Extract LS-factor
+  # Extract K-factor and LS-factor
   # - Read raster
   raster_LS = terra::rast(LS_file)
-  # - Extract raster values
-  out$LS_factor <- as.numeric(terra::extract(
-    raster_LS, cbind(out$longitude, out$latitude))[, 1])
-  
-  # Extract K-factor
-  # - Read raster
   raster_K = terra::rast(K_file)
+  # - Convert the latitude / longitude data of NFI plots to the soil raster projection
+  out.coord.rast = NFIMed_plot %>%
+    select(IDP, x = longitude, y = latitude) %>%
+    st_as_sf(coords = c("x", "y"), crs = 4326, agr = "constant") %>%
+    st_transform(crs = crs(raster_K)) %>%
+    mutate(x = st_coordinates(.)[,1],
+           y = st_coordinates(.)[,2]) %>%
+    st_drop_geometry()
   # - Extract raster values
   out$K_factor <- as.numeric(terra::extract(
-    raster_K, cbind(out$longitude, out$latitude))[, 1])
+    raster_K, cbind(out.coord.rast$x, out.coord.rast$y))[, 1])
+  out$LS_factor <- as.numeric(terra::extract(
+    raster_LS, cbind(out.coord.rast$x, out.coord.rast$y))[, 1])
   
   # Return output
   return(out)
@@ -617,6 +634,41 @@ get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file
   return(out)
   
 }
+
+#' Calculate soil erosion mitigation by forest
+#' @param FrenchNFI_ecology_raw Raw ecological data
+#' @param NFIMed_tree Tree data formatted
+#' @param clim_and_soil climate and soil data extracted for each plot
+get_service_erosion = function(FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil){
+  
+  # Start from tree data
+  out = NFIMed_tree %>%
+    # Caclulate stand height
+    group_by(IDP) %>%
+    summarize(height.mean = mean(height, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Add canopy cover (FC) and ground vegetation cover (PC)
+    left_join(FrenchNFI_ecology_raw %>%
+                mutate(FC = LIGN2/10, PC = HERB/10) %>%
+                select(IDP, FC, PC), by = "IDP") %>%
+    # Calculate C-factor
+    mutate(CC = 1 - FC*exp(-0.1*(height.mean/0.3048)), # convert heigh in ft
+           SC = exp(-0.35*0.45*sqrt(PC)), 
+           C = CC*SC) %>%
+    # Add longitude, climate and soil variables
+    left_join(clim_and_soil, by = "IDP") %>%
+    # Calculate rainfall Erosivity (R)
+    mutate(R = 0.117*pr*sqrt(prmax)*(2 + 0.015*longitude)) %>%
+    # Calculate erosion mitigation
+    mutate(erosion.mitig = R*LS_factor*K_factor*(1 - C)) %>%
+    # Keep only columns of interest
+    select(IDP, erosion.mitig)
+  
+  # Return output
+  return(out)
+  
+}
+
 
 #' Function to merge service data associated with different sources
 #' @param list.in list of dataframe contianing plot-level services data
