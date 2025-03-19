@@ -4,7 +4,7 @@
 #' @name functions_data.R  
 #' @description R script containing all functions relative to data
 #               importation and formatting
-#' @author Natheo Beauchamp, Julien Barrere
+#' @author Julien Barrere
 #
 #
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -183,6 +183,52 @@ format_flora = function(NFIMed_plot, FrenchNFI_flora_raw){
   return(out)
 }
 
+#' Function to remove plots based on outliers or otherr criterias
+#' @param NFIMed_tree Tree data formatted
+filter_plots = function(NFIMed_tree){
+  
+  unique((NFIMed_tree %>%
+            group_by(IDP) %>%
+            filter(!any(dbh > 1300)))$IDP)
+}
+
+
+
+#' Function to extract climate and soil data for the calculation of erosion service
+#' @param NFIMed_plot NFI plot data formatted
+#' @param LS_file file containing LS-factor raster data
+#' @param K_file file containing K-factor raster data
+#' @param chelsa_prec_file file containing rainfall raster data from CHELSA
+extract_clim_and_soil = function(NFIMed_plot, LS_file, K_file, chelsa_prec_file){
+  
+  # Initialize output
+  out = NFIMed_plot
+  
+  # Extract precipitations
+  # - Read raster of precipitations
+  raster_map = terra::rast(chelsa_prec_file)
+  # - Extract raster values
+  out$pr <- as.numeric(terra::extract(
+    raster_map, cbind(out$longitude, out$latitude))[, 1])
+  
+  # Extract LS-factor
+  # - Read raster
+  raster_LS = terra::rast(LS_file)
+  # - Extract raster values
+  out$LS_factor <- as.numeric(terra::extract(
+    raster_LS, cbind(out$longitude, out$latitude))[, 1])
+  
+  # Extract K-factor
+  # - Read raster
+  raster_K = terra::rast(K_file)
+  # - Extract raster values
+  out$K_factor <- as.numeric(terra::extract(
+    raster_K, cbind(out$longitude, out$latitude))[, 1])
+  
+  # Return output
+  return(out)
+}
+
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #### -- Manage floristic metrics ------------------
@@ -286,7 +332,8 @@ get_pfaf_file = function(flora.species_file, flora.species_file.out){
 #' Function to add medicinal and edibility score to the species data base
 #' @param flora.species.list Data frame listing species with taxonomic info
 #' @param flora.species.with.score_file species score of medicinal and edibility
-merge_species_scores = function(flora.species.list, flora.species.with.score_file){
+merge_species_scores = function(
+    flora.species.list, flora.species.with.score_file, tree.species_info){
   
   # Format the edibility and medicinal metrics
   flora.species.with.score = fread(flora.species.with.score_file) %>%
@@ -297,7 +344,11 @@ merge_species_scores = function(flora.species.list, flora.species.with.score_fil
   
   # Join to the species list
   out = flora.species.list %>%
-    left_join(flora.species.with.score, by = "species")
+    left_join(flora.species.with.score, by = "species") %>%
+    mutate(edibility = ifelse(species.or %in% tree.species_info$species.original, 
+                              0, edibility), 
+           medicinal = ifelse(species.or %in% tree.species_info$species.original, 
+                              0, medicinal))
   
   # Return output
   return(out)
@@ -391,8 +442,8 @@ get_services_flora = function(NFIMed_flora, flora.species.with.score){
            p = abundance/sum(abundance), 
            plnp = p*log(p)) %>%
     summarize(ab.medicinal = 1 - prod(inv.med), 
-              ab.edibility = 1 - prod(inv.edi), 
-              shannon = -sum(plnp))
+              #shannon = -sum(plnp), 
+              ab.edibility = 1 - prod(inv.edi))
   
   # Return output
   return(out)
@@ -569,13 +620,15 @@ get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file
 
 #' Function to merge service data associated with different sources
 #' @param list.in list of dataframe contianing plot-level services data
-merge_service = function(list.in){
+#' @param plots_filtered Plots to keep for the analyses
+merge_service = function(list.in, plots_filtered){
   
   # Loop on all source of services
   for(i in 1:length(names(list.in))){
     
     # Format data from source i
     data.i = list.in[[i]] %>%
+      filter(IDP %in% plots_filtered) %>%
       gather(key = "service", value = "service.value", colnames(.)[2:dim(.)[2]])
     
     # Compile into final dataset
