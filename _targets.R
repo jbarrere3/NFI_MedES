@@ -64,6 +64,8 @@ list(
   # - Extract climate and soil data for each NFI plot
   tar_target(clim_and_soil, extract_clim_and_soil(
     NFIMed_plot, LS_file, K_file, chelsa_prec_file, chelsa_precmax_file)),
+  # - Sylvoecoregions shapefile
+  tar_target(sylvoER_shp_file, "data/GIS/ser_l93.shp"),
   
   # Get information on floristic data
   # - Make a vector of all species present
@@ -77,6 +79,12 @@ list(
   # - Add edibility and medicinal score to the species list
   tar_target(flora.species.with.score, merge_species_scores(
     flora.species.list, flora.species.with.score_file, tree.species_info)), 
+  # - Scores browsed from litterature from species not in PFAF
+  tar_target(score_species_not_in_pfaf_file, "data/PFAF/species_not_in_pfaf_updated.xlsx", 
+             format = "file"),
+  # - Update flora.species.with.score with the scores sourced from litterature by Philip
+  tar_target(flora.species.with.score_updated, update_flora.species.with.score(
+    score_species_not_in_pfaf_file, flora.species.with.score)),
   
   # Get more information on tree data
   # - File of the WorldFlora database
@@ -96,7 +104,7 @@ list(
   # Calculate plot-level ecosystem services
   # - from floristic data
   tar_target(services_flora, get_services_flora(
-    NFIMed_flora, flora.species.with.score)), 
+    NFIMed_flora, flora.species.with.score_updated)), 
   # - from tree-level data
   tar_target(services_tree, get_services_tree(
     NFIMed_tree, FrenchNFI_species, coef_allometry_file,  coef_volume_file,
@@ -110,10 +118,10 @@ list(
     plots_filtered)),
   # - table with the list and title of each service
   tar_target(service_table, data.frame(
-    service = c("ab.medicinal", "ab.edibility", "Cmass_kg.ha", 
+    service = c("ab.medicinal", "ab.edibility", "Cmass_t.ha", 
                 "timber.volume_m3.ha", "erosion.mitig"), 
     title = c("Abundance of\nmedicinal plants",  "Abundance of\nedible plants", 
-              "Carbon stored\n(kg.ha)", "Timber volume\n(m3.ha)", 
+              "Carbon stored\n(t.ha)", "Timber volume\n(m3.ha)", 
               "Erosion mitigation\n(t.ha)"))),
   
   # Plot the data
@@ -121,7 +129,7 @@ list(
     NFIMed_plot, data_services, service_table, "export/fig/fig_temporal.jpg"), 
     format = "file"),
   tar_target(fig_spatial, plot_spatial_services(
-    NFIMed_plot, data_services, service_table, "export/fig/fig_spatial.jpg"),
-    format = "file")
+    NFIMed_plot, data_services, service_table, sylvoER_shp_file, 
+    "export/fig/fig_spatial.jpg"), format = "file")
   
 )

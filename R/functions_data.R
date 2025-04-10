@@ -346,6 +346,7 @@ get_pfaf_file = function(flora.species_file, flora.species_file.out){
   return(flora.species_file.out)
 } 
 
+
 #' Function to add medicinal and edibility score to the species data base
 #' @param flora.species.list Data frame listing species with taxonomic info
 #' @param flora.species.with.score_file species score of medicinal and edibility
@@ -362,15 +363,40 @@ merge_species_scores = function(
   # Join to the species list
   out = flora.species.list %>%
     left_join(flora.species.with.score, by = "species") %>%
-    mutate(edibility = ifelse(species.or %in% tree.species_info$species.original, 
-                              0, edibility), 
-           medicinal = ifelse(species.or %in% tree.species_info$species.original, 
-                              0, medicinal))
+    mutate(edibility = ifelse(species %in% tree.species_info$species, 0, edibility), 
+           medicinal = ifelse(species %in% tree.species_info$species, 0, medicinal))
   
   # Return output
   return(out)
   
 }
+
+#' Function to update the flora score database with species not in pfaf sourced by Philip
+#' @param score_species_not_in_pfaf_file xlsx file containing the score of species not in pfaf
+#' @param flora.species.with.score original file with medicinal and edibility score per species
+update_flora.species.with.score = function(score_species_not_in_pfaf_file, 
+                                           flora.species.with.score){
+  
+  # Read the excel file and format it to keep only medicinal and edible use
+  score_species_not_in_pfaf = read_xlsx(score_species_not_in_pfaf_file, 
+                                        sheet = "species_not_in_pfaf_updated") %>%
+    mutate(species.or = ifelse(is.na(cover.percent), species, paste0(species, ", ", cover.percent))) %>%
+    select(species.or, edibility.new = Edible, medicinal.new = Medicinal) %>%
+    mutate(edibility.new = as.numeric(edibility.new), 
+           medicinal.new = as.numeric(medicinal.new))
+  
+  # Add the new data to the original flora with score
+  out = flora.species.with.score %>%
+    left_join(score_species_not_in_pfaf, by = "species.or") %>%
+    mutate(edibility = ifelse(is.na(edibility), edibility.new, edibility), 
+           medicinal = ifelse(is.na(medicinal), medicinal.new, medicinal)) %>%
+    select(-medicinal.new, -edibility.new)
+  
+  # Return the updated dataset
+  return(out)
+  
+}
+
 
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -628,7 +654,7 @@ get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file
     # - sum per plot timber volume and carbon mass
     group_by(IDP) %>%
     summarize(timber.volume_m3.ha = sum(volume.ha, na.rm = TRUE), 
-              Cmass_kg.ha = sum(Cmass.tot.ha, na.rm = TRUE))
+              Cmass_t.ha = sum(Cmass.tot.ha, na.rm = TRUE)/1000)
   
   # Return output
   return(out)

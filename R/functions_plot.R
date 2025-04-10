@@ -76,16 +76,27 @@ plot_temporal_services = function(NFIMed_plot, data_services, service_table, fil
 #' @param data_services plot level ecosystem services 
 #' @param service_table table listing services name and title
 #' @param file.out Name of the file to save, including path
-plot_spatial_services = function(NFIMed_plot, data_services, service_table, file.out){
+plot_spatial_services = function(NFIMed_plot, data_services, service_table, 
+                                 sylvoER_shp_file, file.out){
   
   # Create output directory if needed
   create_dir_if_needed(file.out)
   
-  # Spatialize the floristic data
-  data_sf = NFIMed_plot %>%
-    select(-ecoregion) %>%
-    st_as_sf(coords = c("longitude", "latitude"), crs = 4326, agr = "constant") %>%
+  # Average services across sylvoecoregions
+  data_ser = NFIMed_plot %>%
+    select(IDP, ecoregion) %>%
     left_join(data_services, by = "IDP") %>%
+    gather(key = "service", value = "value", service_table$service) %>%
+    group_by(ecoregion, service) %>%
+    summarize(mean = mean(value, na.rm = TRUE)) %>%
+    pivot_wider(names_from = "service", values_from = "mean") %>%
+    ungroup()
+  
+  # Build dataset for plotting
+  sylvoER = read_sf(sylvoER_shp_file, crs = 2154) %>%
+    st_transform(crs = 4326) %>%
+    select(ecoregion = codeser) %>%
+    left_join(data_ser, by = "ecoregion") %>%
     gather(key = "service", value = "value", service_table$service)
   
   # Initialize the list that will contain each plot
@@ -95,16 +106,19 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table, file
   for(i in 1:dim(service_table)[1]){
     plotlist.out[[i]] = ne_countries(scale = "medium", returnclass = "sf") %>%
       ggplot(aes(geometry = geometry)) +
-      geom_sf(fill = "#343A40", color = "gray", show.legend = F, size = 0.2) + 
-      geom_sf(data = subset(data_sf, service == service_table$service[i]), 
-              aes(color = value), size = 0.0001, shape = 20) +
-      scale_color_gradient(low = "red", high = "green") +
-      coord_sf(xlim = c(-5, 10), ylim = c(41.2, 51.1)) +
+      geom_sf(fill = "#778DA9", show.legend = F, size = 0.2) + 
+      geom_sf(data = subset(sylvoER, service == service_table$service[i]), 
+              aes(fill = value)) +
+      scale_fill_gradient(low = "#CCFF33", high = "#007200") +
+      coord_sf(xlim = c(-5, 10), ylim = c(41.2, 51.5)) +
       theme(panel.background = element_rect(color = 'black', fill = 'white'), 
             panel.grid = element_blank(), 
             legend.title = element_blank(), 
             legend.key = element_blank(), 
-            plot.title = element_text(face = "bold", hjust = 0.5)) + 
+            legend.position = c(0.9, 0.5),
+            legend.background = element_rect(color = '#778DA9', fill = 'white'),
+            plot.title = element_text(face = "bold", hjust = 0.5, size = 18), 
+            axis.text = element_text(size = 13)) + 
       ggtitle(service_table$title[i])
   }
   
@@ -112,9 +126,10 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table, file
   plot.out = plot_grid(plotlist = plotlist.out, align = "hv", nrow = 2)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 25, height = 14, 
+  ggsave(file.out, plot.out, width = 38, height = 25, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
   return(file.out)
+  
 }
