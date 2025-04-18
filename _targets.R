@@ -23,7 +23,8 @@ lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("
 # install if needed and load packages
 packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
                  "sp", "sf", "stringr", "taxize", "rnaturalearth", "WorldFlora",
-                 "rnaturalearthdata", "cowplot", "readxl", "terra")
+                 "rnaturalearthdata", "cowplot", "readxl", "terra", "stats", 
+                 "factoextra")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -51,6 +52,8 @@ list(
   tar_target(NFIMed_plot, format_plot(FrenchNFI_plot_raw)), 
   tar_target(NFIMed_tree, format_tree(NFIMed_plot, FrenchNFI_tree_raw, FrenchNFI_species)), 
   tar_target(NFIMed_flora, format_flora(NFIMed_plot, FrenchNFI_flora_raw)), 
+  tar_target(NFIMed_deadwood, format_deadwood(
+    NFIMed_plot, FrenchNFI_deadwood_raw, FrenchNFI_species)),
   
   # Soil and climate data
   # - Local topography (LS-factor) from the European Soil Data Centre
@@ -58,14 +61,24 @@ list(
   # - Soil Erodibility (K-factor) from the European Soil Data Centre
   tar_target(K_file, "data/Soil/K_new_crop.tif", format = "file"), 
   # - Annual precipitation from CHELSA portal
-  tar_target(chelsa_prec_file, "data/Climate/CHELSA_bio10_12.tif", format = "file"),
+  tar_target(chelsa_prec_file, "data/Climate/CHELSA_bio12_1981-2010_V.2.1.tif", 
+             format = "file"),
   # - monthly precipitation of wettest month from CHELSA portal
-  tar_target(chelsa_precmax_file, "data/Climate/CHELSA_bio10_13.tif", format = "file"),
+  tar_target(chelsa_precmax_file, "data/Climate/CHELSA_bio13_1981-2010_V.2.1.tif", 
+             format = "file"),
+  # - potential evapotranspiration calculated with Penman from CHELSA portal
+  tar_target(chelsa_pet_file, "data/Climate/CHELSA_pet_penman_mean_1981-2010_V.2.1.tif", 
+             format = "file"),
+  # - sum of growing degree days above 5 degrees from CHELSA portal
+  tar_target(chelsa_sgdd_file, "data/Climate/CHELSA_gdd5_1981-2010_V.2.1.tif", 
+             format = "file"),
   # - Extract climate and soil data for each NFI plot
   tar_target(clim_and_soil, extract_clim_and_soil(
     NFIMed_plot, LS_file, K_file, chelsa_prec_file, chelsa_precmax_file)),
   # - Sylvoecoregions shapefile
-  tar_target(sylvoER_shp_file, "data/GIS/ser_l93.shp"),
+  tar_target(sylvoER_shp_file, "data/GIS/ser_l93.shp", format = "file"),
+  # - Elevation raster for France
+  tar_target(elevation_raster, "data/GIS/France_metropolitaine.tif", format = "file"),
   
   # Get information on floristic data
   # - Make a vector of all species present
@@ -107,8 +120,8 @@ list(
     NFIMed_flora, flora.species.with.score_updated)), 
   # - from tree-level data
   tar_target(services_tree, get_services_tree(
-    NFIMed_tree, FrenchNFI_species, coef_allometry_file,  coef_volume_file,
-    wood.density_file, tree.species_info, FrenchNFI_plot_raw)),
+    NFIMed_tree, NFIMed_plot, NFIMed_deadwood, FrenchNFI_species, 
+    coef_allometry_file, coef_volume_file, wood.density_file, tree.species_info)),
   # - erosion mitigation from ecological data
   tar_target(services_erosion, get_service_erosion(
     FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil)),
@@ -118,11 +131,17 @@ list(
     plots_filtered)),
   # - table with the list and title of each service
   tar_target(service_table, data.frame(
-    service = c("ab.medicinal", "ab.edibility", "Cmass_t.ha", 
-                "timber.volume_m3.ha", "erosion.mitig"), 
+    service = c("ab.medicinal", "ab.edibility", "Csequestr_kg.ha.yr", 
+                "Cstock_t.ha", "timber.volume_m3.ha", "erosion.mitig"), 
     title = c("Abundance of\nmedicinal plants",  "Abundance of\nedible plants", 
-              "Carbon stored\n(t.ha)", "Timber volume\n(m3.ha)", 
-              "Erosion mitigation\n(t.ha)"))),
+              "Carbon sequestrated\n(kg.ha.yr)", "Carbon stock\n(t.ha)", 
+              "Timber volume\n(m3.ha)", "Erosion mitigation\n(t.ha)"), 
+    type = c("capacity", "capacity", "flux", "capacity", "capacity", "flux"))),
+  
+  # Compile all explanatory variables
+  tar_target(data_explanatory, compile_explanatory(
+    NFIMed_tree, NFIMed_plot, chelsa_prec_file, chelsa_pet_file, 
+    chelsa_sgdd_file, elevation_raster)),
   
   # Plot the data
   tar_target(fig_temporal, plot_temporal_services(

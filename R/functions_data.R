@@ -99,6 +99,23 @@ format_plot = function(FrenchNFI_plot_raw){
     # # Filter ecological regions
     # filter(SER %in% c("J10", "J21", "J22", "J23", "J24", 
     #                   "J30", "J40", "K11", "K12", "K12")) %>%
+    # Extract the stand structure
+    mutate(sver_sfo = case_when(
+      !is.na(SFO) ~ SFO, 
+      is.na(SFO) & SVER %in% c("2", "6") ~ 1, 
+      is.na(SFO) & SVER == "4" ~ 2, 
+      is.na(SFO) & SVER == "5" ~ 3, 
+      is.na(SFO) & SVER == "3" ~ 4, 
+      is.na(SFO) & SVER %in% c("", "0", "X") ~ 0, 
+      TRUE ~ NA)) %>%
+    # Attribute structure based on the unified codification
+    mutate(str = case_when(
+      sver_sfo == 1 ~ "even", # even-aged (FR in original script)
+      sver_sfo == 2 ~ "uneven", # uneven-aged (FI in original script)
+      sver_sfo == 3 ~ "copfor", # coppice high forest (FT in original script) 
+      sver_sfo == 4 ~ "cop", # coppice (T in original script)
+      sver_sfo == 0 ~ "nostr", # no structure (PS in original script)
+      TRUE ~ NA)) %>%
     # change coordinates
     st_as_sf(coords = c("XL", "YL"), crs = 2154, agr = "constant") %>%
     st_transform(crs = 4326) %>% 
@@ -106,7 +123,7 @@ format_plot = function(FrenchNFI_plot_raw){
            latitude = st_coordinates(.)[,2])  %>%
     st_drop_geometry() %>%
     # Select columns
-    select(IDP, year = CAMPAGNE, longitude, latitude, ecoregion = SER) 
+    select(IDP, year = CAMPAGNE, longitude, latitude, ecoregion = SER, str) 
   
 }
 
@@ -135,7 +152,7 @@ format_tree = function(NFIMed_plot, FrenchNFI_tree_raw, FrenchNFI_species){
     # Keep columns of interest
     select(IDT = A, IDP, ESPAR, species, status, dbh, ba, height = HTOT, 
            height.cut = HDEC, age = AGE, age.130 = AGE13, trunk.length = LFSD, 
-           volume = V, weight = W) %>%
+           increment = IR5, volume = V, weight = W) %>%
     filter(!is.na(dbh))
   
 }
@@ -183,6 +200,29 @@ format_flora = function(NFIMed_plot, FrenchNFI_flora_raw){
   return(out)
 }
 
+#' Format deadwood data
+#' @param NFIMed_plot formatted plot-level data
+#' @param FrenchNFI_deadwood_raw raw deadwood data
+#' @param FrenchNFI_species correspondance table for tree species 
+format_deadwood = function(NFIMed_plot, FrenchNFI_deadwood_raw, FrenchNFI_species){
+  
+  FrenchNFI_deadwood_raw %>%
+    # Filter to keep only the first visits
+    mutate(id_temp = paste0(IDP, "_", CAMPAGNE)) %>%
+    filter(id_temp %in% paste(NFIMed_plot$IDP, NFIMed_plot$year, sep = "_")) %>%
+    rename(ESPAR = ESPAR_BM) %>%
+    left_join((FrenchNFI_species %>% 
+                 select(`ESPAR` = `// espar`, `species` = `lib_cdref`) %>%
+                 mutate(ESPAR = ifelse(ESPAR %in% as.character(c(1:9)), 
+                                       paste0(0, ESPAR), ESPAR))), by = "ESPAR") %>%
+    # Add percentage of decay from class
+    mutate(decay_prop = DECOMP*0.2 - 0.1) %>%
+    # Keep columns of interest
+    select(IDT = A, IDP, ESPAR, species, dbm = DBM, decay_class = DECOMP, 
+           decay_prop) %>%
+    filter(!is.na(dbm) & !is.na(species))
+  
+}
 #' Function to remove plots based on outliers or otherr criterias
 #' @param NFIMed_tree Tree data formatted
 filter_plots = function(NFIMed_tree){
@@ -495,40 +535,18 @@ get_services_flora = function(NFIMed_flora, flora.species.with.score){
 
 #' Calculate services from tree data
 #' @param NFIMed_tree tree-level formatted NFI data
+#' @param NFIMed_plot formatted plot-level NFI data
+#' @param NFIMed_deadwood formatted plot-level NFI data
 #' @param FrenchNFI_species correspondance btw species name and code
 #' @param coef_allometry_file file containing allometry coefficients from Savine et al. (in prep)
 #' @param coef_volume_file file containing tree volume coefficients from Deleuze et al. 2014
 #' @param wood.density_file file containing tree density from XyloDensMap (Leban et al.)
 #' @param tree.species_info tree-level taxonomic information
-#' @param FrenchNFI_plot_raw raw plot-level NFI data
-get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file, 
-                             coef_volume_file, wood.density_file, tree.species_info, 
-                             FrenchNFI_plot_raw){
+get_services_tree = function(
+    NFIMed_tree, NFIMed_plot, NFIMed_deadwood, FrenchNFI_species, 
+    coef_allometry_file, coef_volume_file, wood.density_file, tree.species_info){
   
-  # Process allometry data
-  # - Indicate whether each plot is regular or irregular
-  plot_structure = FrenchNFI_plot_raw %>%
-    filter(VISITE == 1) %>%
-    filter(IDP %in% NFIMed_tree$IDP) %>%
-    # Unify codes to the codes of SFO
-    mutate(sver_sfo = case_when(
-      !is.na(SFO) ~ SFO, 
-      is.na(SFO) & SVER %in% c("2", "6") ~ 1, 
-      is.na(SFO) & SVER == "4" ~ 2, 
-      is.na(SFO) & SVER == "5" ~ 3, 
-      is.na(SFO) & SVER == "3" ~ 4, 
-      is.na(SFO) & SVER %in% c("", "0", "X") ~ 0, 
-      TRUE ~ NA)) %>%
-    # Attribute structure based on the unified codification
-    mutate(str = case_when(
-      sver_sfo == 1 ~ "even", # even-aged (FR in original script)
-      sver_sfo == 2 ~ "uneven", # uneven-aged (FI in original script)
-      sver_sfo == 3 ~ "copfor", # coppice high forest (FT in original script) 
-      sver_sfo == 4 ~ "cop", # coppice (T in original script)
-      sver_sfo == 0 ~ "nostr", # no structure (PS in original script)
-      TRUE ~ NA)) %>%
-    select(IDP, str) %>%
-    distinct()
+  
   # - Read and process raw data
   coef_allometry_raw = fread(coef_allometry_file) %>%
     # Remove 0 in one letter codes
@@ -598,17 +616,44 @@ get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file
     select(species = species.original, wood.density) %>%
     distinct()
   
+  ## - Calculate deadwood volume on the ground
+  deadwood.per.plot = NFIMed_deadwood %>%
+    # Calculate volume by species, plot and decay class based on Huber's formula
+    mutate(dbm2_cm = (dbm*100)^2) %>%
+    group_by(IDP, species, decay_prop) %>%
+    summarize(V_m3.ha = (pi^2/(8*12))*sum(dbm2_cm, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # - join Wood density data
+    left_join(wd_per_species, by = "species") %>%
+    mutate(deadwood_kg.ha = V_m3.ha*wood.density*(1 - decay_prop)) %>%
+    # Average by plot
+    group_by(IDP) %>%
+    summarize(volume_deadwood.lying_m3.ha = sum(V_m3.ha, na.rm = TRUE), 
+              Cstock_deadwood.lying_kg.ha = 0.5*sum(deadwood_kg.ha, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Remove outliers
+    mutate(
+      volume_deadwood.lying_m3.ha = ifelse(
+        volume_deadwood.lying_m3.ha > 1000, NA_real_, volume_deadwood.lying_m3.ha), 
+      Cstock_deadwood.lying_kg.ha = ifelse(
+        volume_deadwood.lying_m3.ha > 1000, NA_real_, Cstock_deadwood.lying_kg.ha))
+  
+  
+  
+  
   ## - Calculate carbon per tree - ##
   out = NFIMed_tree %>%
     
     # GET TREE HEIGHT FOR ALL INDIVIDUAL TREES
     # - Add plot structure (regular or irregular)
-    left_join(plot_structure, by = "IDP") %>%
+    left_join(NFIMed_plot %>% select(IDP, str), by = "IDP") %>%
     # - Add allometry coefficients
     left_join(coef_allometry_per_species, by = "species") %>%
     # - Calculate plot quadratic diameter
     group_by(IDP) %>%
     mutate(dbh_cm = dbh/10, 
+           dbh0_cm = dbh/10 - increment*100, 
+           ba.0 = pi*(dbh0_cm/200)^2,
            dbh2.W_cm = (dbh_cm^2)*weight, 
            dqm_cm = sqrt(sum(dbh2.W_cm, na.rm = TRUE)/sum(weight, na.rm  = TRUE))) %>%
     ungroup() %>%
@@ -622,10 +667,22 @@ get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file
         1/(1 + (b1*(1 + b3)*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))), 
       str == "even" ~ 1.3 + a1*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
         1/(1 + (b1*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))))) %>%
+    # - Calculate tree height 5 years before from allometric relations
+    mutate(height0.allometry = case_when(
+      str == "uneven" ~ 1.3 + a1*(1 + a2)*(1 + a5*ba.0)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b2)*exp(-b5*ba.0))/((dbh0_cm/dqm_cm)^d1))), 
+      str %in% c("cop", "nostr") ~ 1.3 + a1*(1 + a4)*(1 + a5*ba.0)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b4)*exp(-b5*ba.0))/((dbh0_cm/dqm_cm)^d1))), 
+      str == "copfor" ~ 1.3 + a1*(1 + a3)*(1 + a5*ba.0)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b3)*exp(-b5*ba.0))/((dbh0_cm/dqm_cm)^d1))), 
+      str == "even" ~ 1.3 + a1*(1 + a5*ba.0)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*exp(-b5*ba.0))/((dbh0_cm/dqm_cm)^d1))))) %>%
     # - use allometric height when no observed height
     mutate(height = ifelse(is.na(height), height.allometry, height)) %>%
     # - Calculate a rectified height when below 5 meters
-    mutate(height.rectif = ifelse(height < 5, 5, height)) %>%
+    mutate(height.rectif = ifelse(height < 5, 5, height), 
+           height.rectif.allom = ifelse(height.allometry < 5, 5, height.allometry), 
+           height0.rectif.allom = ifelse(height0.allometry < 5, 5, height0.allometry)) %>%
     # - Remove residual NAs in plots where there are trees with unknown height or weight
     group_by(IDP) %>% mutate(anyNA = any(is.na(height)) | any(is.na(weight))) %>% 
     ungroup() %>% filter(!anyNA) %>%
@@ -637,24 +694,45 @@ get_services_tree = function(NFIMed_tree, FrenchNFI_species, coef_allometry_file
     mutate(c130 = pi*dbh/1000, 
            volume.emerge = (height*c130^2)/(4*pi*(1-1.3/height.rectif)^2) * (
              aEmerge + bEmerge*sqrt(c130)/height.rectif + cEmerge*height.rectif/c130)) %>%
+    # - calculate volume increment based on emerge and allometric height
+    mutate(c130.0 = pi*dbh0_cm/100, 
+           volume.emerge.allom = (height.allometry*c130^2)/(4*pi*(1-1.3/height.rectif.allom)^2) * (
+             aEmerge + bEmerge*sqrt(c130)/height.rectif.allom + cEmerge*height.rectif.allom/c130), 
+           volume.emerge.allom.0 = (height0.allometry*c130.0^2)/(4*pi*(1-1.3/height0.rectif.allom)^2) * (
+             aEmerge + bEmerge*sqrt(c130)/height0.rectif.allom + cEmerge*height0.rectif.allom/c130), 
+           volume.increment = (volume.emerge.allom - volume.emerge.allom.0)/5) %>%
     # - calculate root volume using expansion factor
     mutate(volume.root = volume*0.29) %>%
     # - timber volume (merchandable) and total volume per ha
-    mutate(volume.tot = volume.emerge + volume.root, 
-           volume.ha = volume*weight, 
-           volume.tot.ha = volume.tot*weight) %>%
+    mutate(alive = ifelse(status == "alive", 1, 0), 
+           volume.tot.living.ha = alive*(volume.emerge + volume.root)*weight, 
+           volume.tot.deadwood.ha = (1 - alive)*(volume.emerge + volume.root)*weight, 
+           volume.increment.ha = alive*volume.increment) %>%
     
     # GET dry mass and thus carbon mass
     # - join Wood density data
     left_join(wd_per_species, by = "species") %>%
-    # - Calculate wood mass per ha
-    mutate(mass.tot.ha = wood.density*volume.tot.ha) %>%
+    # - Calculate wood mass per ha for living, dead and increment
+    mutate(mass.tot.living.ha = wood.density*volume.tot.living.ha, 
+           mass.tot.deadwood.ha = wood.density*volume.tot.deadwood.ha*0.9, 
+           mass.increment.ha = wood.density*volume.increment.ha) %>%
     # - Calculate carbon mass per ha
-    mutate(Cmass.tot.ha = 0.5*mass.tot.ha) %>%
+    mutate(Cmass.tot.ha = 0.5*(mass.tot.deadwood.ha + mass.tot.living.ha), 
+           Cmass.tot.ha.yr = 0.5*mass.increment.ha) %>%
     # - sum per plot timber volume and carbon mass
     group_by(IDP) %>%
-    summarize(timber.volume_m3.ha = sum(volume.ha, na.rm = TRUE), 
-              Cmass_t.ha = sum(Cmass.tot.ha, na.rm = TRUE)/1000)
+    summarize(timber.volume_m3.ha = sum(volume.tot.living.ha, na.rm = TRUE), 
+              Cstock_standing_t.ha = sum(Cmass.tot.ha, na.rm = TRUE)/1000, 
+              Csequestr_kg.ha.yr = sum(Cmass.tot.ha.yr, na.rm = TRUE), 
+              volume_deadwood.standing_m3.ha = sum(volume.tot.deadwood.ha)) %>%
+    # - Add lying dead wood data
+    left_join(deadwood.per.plot, by = "IDP") %>%
+    mutate(volume_deadwood_m3.ha = volume_deadwood.standing_m3.ha + volume_deadwood.lying_m3.ha, 
+           Cstock_t.ha = Cstock_deadwood.lying_kg.ha/1000 + Cstock_standing_t.ha) %>%
+    select(IDP, Csequestr_kg.ha.yr, 
+           timber.volume_m3.ha,
+           # volume_deadwood_m3.ha, 
+           Cstock_t.ha)
   
   # Return output
   return(out)
@@ -721,3 +799,74 @@ merge_service = function(list.in, plots_filtered){
   return(out)
   
 }
+
+#' Function to calculate all plot-level explanatory variables
+#' @param NFIMed_tree Tree-level NFI data
+#' @param NFIMed_plot Plot-level NFI data
+#' @param chelsa_prec_file Chelsa raster of precipitation
+#' @param chelsa_pet_file Chelsa raster of potential evapotranspiration 
+#' @param chelsa_sgdd_file Chelsa raster of sgdd
+#' @param elevation_raster Elevation raster for France metropolitan area
+compile_explanatory = function(NFIMed_tree, NFIMed_plot, chelsa_prec_file, 
+                               chelsa_pet_file, chelsa_sgdd_file, elevation_raster){
+  
+  # Complete dataset
+  data.full = NFIMed_tree %>%
+    mutate(ba.ha = pi*(dbh/2000)^2*weight)
+  
+  # Species-level data
+  data.species = data.full %>%
+    group_by(IDP, species) %>%
+    summarize(ab = sum(ba.ha, na.rm = TRUE)) %>%
+    ungroup() %>% group_by(IDP) %>%
+    mutate(p = ab/sum(ab, na.rm = TRUE), 
+           plnp = p*log(p)) %>%
+    summarize(shannon = -sum(plnp, na.rm = TRUE), 
+              richness = n()) %>%
+    ungroup()
+  
+  # Structural data
+  data.str = data.full %>%
+    mutate(dbh2.W = (dbh^2)*weight) %>%
+    group_by(IDP) %>%
+    mutate(dbh.mean = weighted.mean(dbh, w = weight, na.rm = TRUE), 
+           w.diffdbh2 = weight*(dbh - dbh.mean)^2) %>% 
+    summarize(ba.tot = sum(ba.ha, na.rm = TRUE), 
+              dqm = sqrt(sum(dbh2.W, na.rm = TRUE)/sum(weight, na.rm  = TRUE)), 
+              str.div = sqrt(sum(w.diffdbh2, na.rm = TRUE))) %>%
+    ungroup()
+  
+  # Climate data
+  # - Initialize data
+  data.clim = NFIMed_plot %>% select(IDP, longitude, latitude)
+  # - Read raster of annual precipitations, pet, elevation and sgdd
+  raster_pr = terra::rast(chelsa_prec_file)
+  raster_pet = terra::rast(chelsa_pet_file)
+  raster_sgdd = terra::rast(chelsa_sgdd_file)
+  raster_elev = terra::rast(elevation_raster)
+  # - Extract raster values
+  data.clim$pr <- as.numeric(terra::extract(
+    raster_pr, cbind(data.clim$longitude, data.clim$latitude))[, 1])
+  data.clim$pet <- as.numeric(terra::extract(
+    raster_pet, cbind(data.clim$longitude, data.clim$latitude))[, 1])
+  data.clim$sgdd <- as.numeric(terra::extract(
+    raster_sgdd, cbind(data.clim$longitude, data.clim$latitude))[, 1])
+  data.clim$elev <- as.numeric(terra::extract(
+    raster_elev, cbind(data.clim$longitude, data.clim$latitude))[, 1])
+  # - Calculate water availability index
+  data.clim = data.clim %>% mutate(wai = (pr - pet)/pr)
+  # - Add pca axis
+  pca = prcomp((data.clim %>% dplyr::select(sgdd, wai)), center = T, scale = T)
+  data.clim$pca1 = get_pca_ind(pca)[[1]][, 1]
+  
+  # Compile all data together
+  out = NFIMed_plot %>%
+    left_join(data.str, by = "IDP") %>%
+    left_join(data.species, by = "IDP") %>%
+    left_join(data.clim %>% select(IDP, elev, sgdd, wai, pca_clim = pca1), by = "IDP")
+  
+  # Return output 
+  return(out)
+  
+}
+

@@ -99,12 +99,19 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
     left_join(data_ser, by = "ecoregion") %>%
     gather(key = "service", value = "value", service_table$service)
   
-  # Initialize the list that will contain each plot
-  plotlist.out = vector(mode = "list", length = dim(service_table)[1])
+  # Initialize the lists that will contain each plot
+  plotlist.flux.out = vector(
+    mode = "list", length = length(which(service_table$type == "flux")))
+  plotlist.capacity.out = vector(
+    mode = "list", length = length(which(service_table$type == "capacity")))
+  
+  # Initialize counter for capacity and flux
+  k_flux = 0
+  k_capacity = 0
   
   # Loop on all services
   for(i in 1:dim(service_table)[1]){
-    plotlist.out[[i]] = ne_countries(scale = "medium", returnclass = "sf") %>%
+    plot.i = ne_countries(scale = "medium", returnclass = "sf") %>%
       ggplot(aes(geometry = geometry)) +
       geom_sf(fill = "#778DA9", show.legend = F, size = 0.2) + 
       geom_sf(data = subset(sylvoER, service == service_table$service[i]), 
@@ -117,13 +124,27 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
             legend.key = element_blank(), 
             legend.position = c(0.9, 0.5),
             legend.background = element_rect(color = '#778DA9', fill = 'white'),
-            plot.title = element_text(face = "bold", hjust = 0.5, size = 18), 
+            plot.title = element_text(hjust = 0.5, size = 18), 
             axis.text = element_text(size = 13)) + 
       ggtitle(service_table$title[i])
+    
+    # Add plot i to the right list
+    if(service_table$type[i] == "capacity"){
+      k_capacity = k_capacity + 1
+      plotlist.capacity.out[[k_capacity]] = plot.i
+    }
+    if(service_table$type[i] == "flux"){
+      k_flux = k_flux + 1
+      plotlist.flux.out[[k_flux]] = plot.i
+    }
   }
   
   # Assemble plots
-  plot.out = plot_grid(plotlist = plotlist.out, align = "hv", nrow = 2)
+  plot.out = plot_grid(
+    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 2), 
+    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 2),
+    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
+    scale = 0.9, align = "hv", label_size = 22)
   
   # - Save the plot
   ggsave(file.out, plot.out, width = 38, height = 25, 
