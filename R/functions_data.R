@@ -743,7 +743,40 @@ get_services_tree = function(
 #' @param FrenchNFI_ecology_raw Raw ecological data
 #' @param NFIMed_tree Tree data formatted
 #' @param clim_and_soil climate and soil data extracted for each plot
-get_service_erosion = function(FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil){
+#' @param tree.species_info Taxonomic info on each tree species
+get_service_erosion = function(FrenchNFI_ecology_raw, NFIMed_tree, 
+                               clim_and_soil, tree.species_info){
+  
+  
+  # Attribute each plot to broadleaf, conifer or mixed. 
+  plot.type = NFIMed_tree %>%
+    # Calculate basal area per ha per tree
+    mutate(ba.ha = ba*weight) %>%
+    # Add classification of species as conifer / broadleaf
+    left_join(tree.species_info %>% select(species = species.original, group), 
+              by = "species") %>%
+    # Calculate proportion of broadleaf / conifer per plot
+    group_by(IDP, group) %>%
+    summarise(ba.group = sum(ba.ha, na.rm = TRUE)) %>%
+    ungroup() %>% group_by(IDP) %>%
+    mutate(ba.group.prop = ba.group/sum(ba.group, na.rm = TRUE)) %>%
+    # Re-format to have one column as broadleaf prop and one as conifer prop
+    ungroup() %>% select(-ba.group) %>%
+    pivot_wider(id_cols = "IDP", values_from = "ba.group.prop", 
+                names_from = group) %>% select(-`NA`) %>%
+    mutate(angiosperms = ifelse(is.na(angiosperms), 0, angiosperms), 
+           gymnosperms = ifelse(is.na(gymnosperms), 0, gymnosperms)) %>%
+    # - Rescale so that the sum is 1 (for plots where there is NA)
+    mutate(sum_prop = angiosperms + gymnosperms, 
+           angiosperms = angiosperms/sum_prop, 
+           gymnosperms = gymnosperms/sum_prop) %>%
+    # Attribute plot type depending on the relative proportion of conifer and broadleaf
+    mutate(type = case_when(
+      angiosperms > 0.85 & gymnosperms < 0.15 ~ "broadleaf", 
+      gymnosperms > 0.85 & angiosperms < 0.15 ~ "conifer", 
+      TRUE ~ "mixed")) %>%
+    select(IDP, type)
+  
   
   # Start from tree data
   out = NFIMed_tree %>%
@@ -755,10 +788,19 @@ get_service_erosion = function(FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil
     left_join(FrenchNFI_ecology_raw %>%
                 mutate(FC = LIGN2/10, PC = HERB/10) %>%
                 select(IDP, FC, PC), by = "IDP") %>%
-    # Calculate C-factor
-    mutate(CC = 1 - FC*exp(-0.1*(height.mean/0.3048)), # convert heigh in ft
-           SC = exp(-0.35*0.45*sqrt(PC)), 
-           C = CC*SC) %>%
+    # Add forest type
+    left_join(plot.type, by = "IDP") %>%
+    # Calculate C factor based on Guo et al. (2023) - Forest. Ecol. Manag.
+    mutate(
+      SCs = case_when(
+        type == "broadleaf" ~ 0.283861*FC + 0.378175*PC, 
+        type == "conifer" ~ 0.256368*FC + 0.378175*PC, 
+        type == "mixed" ~ 0.292352*FC + 0.378175*PC), 
+      C = case_when(
+        SCs > 0.1 & SCs < 0.35 ~ 0.48*exp(-7.031*SCs), 
+        SCs >= 0.35 ~ 0.002*SCs^(-2.359), 
+        TRUE ~ NA_real_
+      )) %>%
     # Add longitude, climate and soil variables
     left_join(clim_and_soil, by = "IDP") %>%
     # Calculate rainfall Erosivity (R)
@@ -772,6 +814,7 @@ get_service_erosion = function(FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil
   return(out)
   
 }
+
 
 
 #' Function to merge service data associated with different sources
@@ -793,7 +836,10 @@ merge_service = function(list.in, plots_filtered){
   }
   
   # Format into one dataframe with one service per column
-  out = data %>% spread(key = "service", value = "service.value")
+  out = data %>% 
+    # For a few data in carbon sequestration, slightly negative values instead of 0
+    mutate(service.value = ifelse(service.value < 0, 0, service.value)) %>%
+    spread(key = "service", value = "service.value")
   
   # Return output dataframe
   return(out)

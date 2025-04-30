@@ -124,7 +124,7 @@ list(
     coef_allometry_file, coef_volume_file, wood.density_file, tree.species_info)),
   # - erosion mitigation from ecological data
   tar_target(services_erosion, get_service_erosion(
-    FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil)),
+    FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil, tree.species_info)),
   # - merge data together
   tar_target(data_services, merge_service(
     list.in = list(flora = services_flora, tree = services_tree, erosion = services_erosion), 
@@ -135,8 +135,9 @@ list(
                 "Cstock_t.ha", "timber.volume_m3.ha", "erosion.mitig"), 
     title = c("Abundance of\nmedicinal plants",  "Abundance of\nedible plants", 
               "Carbon sequestrated\n(kg.ha.yr)", "Carbon stock\n(t.ha)", 
-              "Timber volume\n(m3.ha)", "Erosion mitigation\n(t.ha)"), 
-    type = c("capacity", "capacity", "flux", "capacity", "capacity", "flux"))),
+              "Timber volume\n(m3.ha)", "Erosion mitigation\n(t.ha.yr)"), 
+    type = c("capacity", "capacity", "flux", "capacity", "capacity", "flux"), 
+    distrib = c("beta", "beta", "pos0", "pos", "pos0", "pos"))),
   
   # Compile all explanatory variables
   tar_target(data_explanatory, compile_explanatory(
