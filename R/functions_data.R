@@ -879,7 +879,7 @@ compile_explanatory = function(NFIMed_tree, NFIMed_plot, chelsa_prec_file,
            w.diffdbh2 = weight*(dbh - dbh.mean)^2) %>% 
     summarize(ba.tot = sum(ba.ha, na.rm = TRUE), 
               dqm = sqrt(sum(dbh2.W, na.rm = TRUE)/sum(weight, na.rm  = TRUE)), 
-              str.div = sqrt(sum(w.diffdbh2, na.rm = TRUE))) %>%
+              str.div = sqrt(sum(w.diffdbh2, na.rm = TRUE)/sum(weight, na.rm  = TRUE))) %>%
     ungroup()
   
   # Climate data
@@ -916,3 +916,148 @@ compile_explanatory = function(NFIMed_tree, NFIMed_plot, chelsa_prec_file,
   
 }
 
+#' Compile all environmental variable used to study the temporal dynamics
+#' @param FrenchNFI_plot_raw Raw French NFI data at the plot level
+#' @param data_explanatory Explanatory variables at the plot level
+#' @param file.str.out Name of the file to export for the plot of the structure PCA
+compile_explanatory_ser = function(FrenchNFI_plot_raw, data_explanatory, 
+                                   file.str.out){
+  
+  # Create directory for the structure PCA plot
+  create_dir_if_needed(file.str.out)
+  
+  # Calculate harvest frequency
+  harv.per.SER = FrenchNFI_plot_raw %>% 
+    filter(VISITE == 1 & CAMPAGNE >= 2009) %>%
+    mutate(GEST = GEST/2) %>%
+    group_by(SER) %>%
+    summarize(prop.management = mean(GEST, na.rm = TRUE)) %>%
+    ungroup() %>% rename(ecoregion = SER)
+  
+  # Calculate disturbance frequency
+  dist.per.SER = FrenchNFI_plot_raw %>%
+    filter(VISITE == 2 & CAMPAGNE >= 2015) %>%
+    mutate(dist.occurence = ifelse(NINCID == 0, 0, 1)) %>%
+    group_by(SER) %>%
+    summarize(dist.freq = mean(dist.occurence, na.rm = TRUE)) %>%
+    ungroup() %>% rename(ecoregion = SER)
+  
+  # Calculate average climate per SER
+  clim.per.SER = data_explanatory %>%
+    group_by(ecoregion) %>%
+    summarize(pca_clim.mean = mean(pca_clim, na.rm = TRUE))
+  
+  # Dominant structure per plot
+  # - Average structure per type and ecoregion
+  str.per.SER = data_explanatory %>%
+    select(IDP, ecoregion, str) %>%
+    mutate(str.bin = 1) %>%
+    pivot_wider(names_from = "str", values_from = str.bin) %>%
+    mutate(across(c(3:dim(.)[2]), ~ ifelse(is.na(.x), 0, .x))) %>%
+    gather(key = "str", value = "occurence", unique(data_explanatory$str)) %>%
+    group_by(ecoregion, str) %>%
+    summarize(mean = mean(occurence, na.rm = TRUE)) %>%
+    pivot_wider(values_from = mean, names_from = str) %>% ungroup()
+  # - Make pca with str proportion
+  pca = prcomp((str.per.SER %>% dplyr::select(-ecoregion)), center = T, scale = T)
+  # - Final data 
+  str.per.SER = str.per.SER %>%
+    mutate(pca1_str = get_pca_ind(pca)[[1]][, 1], 
+           pca2_str = get_pca_ind(pca)[[1]][, 2]) %>%
+    select(ecoregion, pca1_str, pca2_str)
+  # - Extract PCA results
+  pca_data <- as.data.frame(pca$x[, 1:2])
+  var_data <- as.data.frame(pca$rotation[, 1:2])
+  var_data$vars <- rownames(var_data)
+  var_percent <- pca$sdev^2 / sum(pca$sdev^2) * 100
+  # - Create plot
+  plot.str = ggplot() +
+    # Individual points
+    geom_point(data = pca_data, aes(x = PC1, y = PC2), color = "blue", alpha = 0.5) +
+    # Variable arrows
+    geom_segment(data = var_data, 
+                 aes(x = 0, y = 0, xend = PC1*3, yend = PC2*3), 
+                 arrow = arrow(length = unit(0.2, "cm")), 
+                 color = "red") +
+    # Variable labels
+    geom_text(data = var_data, 
+              aes(x = PC1*3.2, y = PC2*3.2, label = vars), 
+              color = "red", size = 4) +
+    # Axis labels with variance percentages
+    labs(x = paste0("pca1_str (", round(var_percent[1], 1), "%)"),
+         y = paste0("pca2_str (", round(var_percent[2], 1), "%)")) +
+    theme(panel.background = element_rect(color = 'black', fill = 'white'), 
+          panel.grid = element_blank()) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+    coord_fixed()  # Keep aspect ratio 1:1 for proper interpretation
+  # - Save the plot
+  ggsave(file.str.out, plot.str, width = 13, height = 13, 
+         units = "cm", dpi = 600, bg = "white")
+  
+  # Compile all data
+  out = dist.per.SER %>%
+    left_join(harv.per.SER, by = "ecoregion") %>%
+    left_join(str.per.SER, by = "ecoregion") %>%
+    left_join(clim.per.SER, by = "ecoregion")
+  
+  # Return output dataset
+  return(out)
+  
+}
+
+#' Estimate the temporal trend of each service in each ecoregion
+#' @param data_services service value per plot
+#' @param NFIMed_plot NFI plot-level data
+#' @param service_table table containing the title and distribution of each service
+get_temporal_trend = function(data_services, NFIMed_plot, service_table){
+  
+  # Prepare the dataset for each model
+  data.in = data_services %>%
+    gather(key = "service", value = "service.value", colnames(.)[-1]) %>%
+    left_join(NFIMed_plot %>% select(IDP, ecoregion, year), by = "IDP")
+  
+  # Prepare the output dataset
+  out = expand.grid(service = service_table$service, 
+                    ecoregion = unique(NFIMed_plot$ecoregion)) %>%
+    mutate(estimate = NA_real_, estimate_lwr = NA_real_, estimate_upr = NA_real_, 
+           estimate_se = NA_real_, pval = NA_real_) %>%
+    left_join(service_table %>% select(service, distrib), by = "service")
+  
+  # Loop on all service - ecoregion combination
+  for(i in 1:dim(out)[1]){
+    
+    # Prepare data
+    data.i = data.in %>% 
+      filter(service == out$service[i] & ecoregion == out$ecoregion[i])
+    
+    # Run model depending on the distribution
+    # - Strictly positive
+    if (out$distrib[i] == "pos") {
+      model.i = glm(service.value ~ year, data = data.i, 
+                    family = gaussian(link = "log"))
+      # - Bounded between 0 and 1 with true zeros
+    } else if (out$distrib[i] == "beta") {
+      model.i = glm(service.value ~ year, data = data.i, 
+                    family = quasibinomial(link = "logit"))
+      # - Positive with true zeros
+    } else if (out$distrib[i] == "pos0") {
+      model.i = glm(service.value ~ year, data = data.i, 
+                    family = tweedie(var.power = 1, link.power = 0)) # log link
+      
+    }
+    
+    # Output of the model
+    stat.i = tidy(model.i, conf.int = TRUE) %>% filter(term != "(Intercept)")
+    # Fill output dataset
+    out$estimate[i] = stat.i$estimate
+    out$estimate_lwr[i] = stat.i$conf.low
+    out$estimate_upr[i] = stat.i$conf.high
+    out$estimate_se[i] = stat.i$std.error
+    out$pval[i] = stat.i$p.value
+  }
+  
+  # Return output
+  return((out %>% select(-distrib)))
+  
+}

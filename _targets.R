@@ -24,7 +24,8 @@ lapply(grep("R$", list.files("R"), value = TRUE), function(x) source(file.path("
 packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table", 
                  "sp", "sf", "stringr", "taxize", "rnaturalearth", "WorldFlora",
                  "rnaturalearthdata", "cowplot", "readxl", "terra", "stats", 
-                 "factoextra")
+                 "factoextra", "purrr", "broom", "car", "tweedie", "glmnet", 
+                 "patchwork", "statmod")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -143,13 +144,29 @@ list(
   tar_target(data_explanatory, compile_explanatory(
     NFIMed_tree, NFIMed_plot, chelsa_prec_file, chelsa_pet_file, 
     chelsa_sgdd_file, elevation_raster)),
+  tar_target(data_explanatory_ser, compile_explanatory_ser(
+    FrenchNFI_plot_raw, data_explanatory, "export/fig/supplementary/figsup_pcastr.jpg")),
+  tar_target(temporal_trend, get_temporal_trend(
+    data_services, NFIMed_plot, service_table)),
   
   # Plot the data
-  tar_target(fig_temporal, plot_temporal_services(
-    NFIMed_plot, data_services, service_table, "export/fig/fig_temporal.jpg"), 
+  # - Methods
+  tar_target(fig_map_ser, map_explanatory_ser(
+    data_explanatory_ser, sylvoER_shp_file, "export/fig/fig_map_ser.jpg"), 
     format = "file"),
+  # - Main analysis
   tar_target(fig_spatial, plot_spatial_services(
     NFIMed_plot, data_services, service_table, sylvoER_shp_file, 
-    "export/fig/fig_spatial.jpg"), format = "file")
+    "export/fig/fig_spatial.jpg"), format = "file"), 
+  tar_target(fig_analysis1, make_plots_analysis1(
+    data_explanatory, data_services, service_table, "export/fig/supplementary/diag1", 
+    "export/fig/fig_model1.jpg"), format = "file"),
+  tar_target(fig_map_trends, map_temporal_trend(
+    temporal_trend, service_table, sylvoER_shp_file, 
+    "export/fig/fig_map_trends.jpg"), format = "file"),
+  # - Supplementary material
+  tar_target(figsup_exploratory, plot_exploratory(
+    data_explanatory, data_services, service_table, 
+    "export/fig/supplementary/figsup_exploratory.jpg"), format = "file")
   
 )
