@@ -164,6 +164,9 @@ list(
   tar_target(fig_map_trends, map_temporal_trend(
     temporal_trend, service_table, sylvoER_shp_file, 
     "export/fig/fig_map_trends.jpg"), format = "file"),
+  tar_target(fig_analysis2, make_plot_analysis2(
+    temporal_trend, data_explanatory_ser, service_table, 
+    "export/fig/fig_model2.jpg"), format = "file"),
   # - Supplementary material
   tar_target(figsup_exploratory, plot_exploratory(
     data_explanatory, data_services, service_table, 

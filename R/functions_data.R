@@ -1021,31 +1021,27 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table){
   out = expand.grid(service = service_table$service, 
                     ecoregion = unique(NFIMed_plot$ecoregion)) %>%
     mutate(estimate = NA_real_, estimate_lwr = NA_real_, estimate_upr = NA_real_, 
-           estimate_se = NA_real_, pval = NA_real_) %>%
+           estimate_se = NA_real_, pval = NA_real_, n = NA_real_) %>%
     left_join(service_table %>% select(service, distrib), by = "service")
   
   # Loop on all service - ecoregion combination
   for(i in 1:dim(out)[1]){
     
     # Prepare data
+    # - subset for the right service and ecoregion
     data.i = data.in %>% 
-      filter(service == out$service[i] & ecoregion == out$ecoregion[i])
+      filter(service == out$service[i] & ecoregion == out$ecoregion[i]) %>%
+      select(year, service.value) %>%
+      drop_na() 
+    # - Get the average service value the first year
+    s0.i = (data.i %>%
+      filter(year == min(year, na.rm = TRUE)) %>%
+      summarize(mean = mean(service.value, na.rm = TRUE)))$mean
+    # - Calculate change in percentage
+    data.i = data.i %>% mutate(service.trend.percent = 100*(service.value - s0.i)/s0.i)
     
     # Run model depending on the distribution
-    # - Strictly positive
-    if (out$distrib[i] == "pos") {
-      model.i = glm(service.value ~ year, data = data.i, 
-                    family = gaussian(link = "log"))
-      # - Bounded between 0 and 1 with true zeros
-    } else if (out$distrib[i] == "beta") {
-      model.i = glm(service.value ~ year, data = data.i, 
-                    family = quasibinomial(link = "logit"))
-      # - Positive with true zeros
-    } else if (out$distrib[i] == "pos0") {
-      model.i = glm(service.value ~ year, data = data.i, 
-                    family = tweedie(var.power = 1, link.power = 0)) # log link
-      
-    }
+    model.i = lm(service.trend.percent ~ 0 + year, data = data.i)
     
     # Output of the model
     stat.i = tidy(model.i, conf.int = TRUE) %>% filter(term != "(Intercept)")
@@ -1055,6 +1051,7 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table){
     out$estimate_upr[i] = stat.i$conf.high
     out$estimate_se[i] = stat.i$std.error
     out$pval[i] = stat.i$p.value
+    out$n[i] = dim(data.i)[1]
   }
   
   # Return output

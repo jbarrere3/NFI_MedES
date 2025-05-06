@@ -348,7 +348,8 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
             legend.background = element_rect(color = '#778DA9', fill = 'white'),
             plot.title = element_text(hjust = 0.5, size = 18), 
             axis.text = element_text(size = 13)) + 
-      ggtitle(service_table$title[i])
+      ggtitle(paste0("Trend in \n", gsub("\\(.+\\)", "", service_table$title[i]), 
+                     " (%/yr)"))
     
   }
   
@@ -364,6 +365,86 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
   
 }
 
+#' Analyse the drivers of temporal trens in ecosystem services
+#' @param temporal_trend estimate per service and ecoregion of the temporal trend
+#' @param data_explanatory_ser explanatory variables at ecoregion scale
+#' @param service_table table indicating the title and distribution of each service
+#' @param file.out Name of the file to save, including path
+make_plot_analysis2 = function(temporal_trend, data_explanatory_ser, 
+                               service_table, file.out){
+  
+  # Create output directory if needed
+  create_dir_if_needed(file.out)
+  
+  # Explanatory variables
+  var.expl = colnames(data_explanatory_ser)[-1]
+  
+  # Formula for model fitting
+  formula.in = as.formula(paste("trend ~", paste(var.expl, collapse = " + ")))
+  
+  for(i in 1:dim(service_table)[1]){
+    
+    # Prepare dataset
+    data.i = temporal_trend %>%
+      filter(service == service_table$service[i]) %>%
+      mutate(weight = dim(.)[1]*n/sum(n, na.rm = TRUE)) %>%
+      select(ecoregion, trend = estimate, weight) %>%
+      left_join(data_explanatory_ser, by = "ecoregion")  %>%
+      mutate(across(c(4:dim(.)[2]), ~ scale(., center = TRUE, scale = TRUE)[, 1]))
+    
+    # Run model
+    model.i = lm(formula.in, data = data.i, weights = weight)
+    
+    # Output of the model
+    stat.i = tidy(model.i, conf.int = TRUE) %>% 
+      filter(term != "(Intercept)") %>%
+      mutate(service = service_table$service[i]) %>% 
+      select(service, term, estimate, se = std.error, p.val = p.value, 
+             conf.low, conf.high)
+    
+    # Add to final output data
+    if(i == 1) out = stat.i
+    else out = rbind(out, stat.i)
+    
+  }
+  
+  # Create a visualization of the estimates with confidence intervals
+  plot.estimate.out <- out %>%
+    left_join(service_table %>% select(service, title), 
+              by = "service") %>%
+    mutate(S = case_when(conf.low > 0 ~ "significantly positive (p < 0.05)", 
+                         conf.high < 0 ~ "significantly negative (p < 0.05)", 
+                         TRUE ~ "not-significant (p > 0.05)")) %>%
+    ggplot(aes(x = estimate, y = term, color = S, fill = S)) +
+    geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
+    geom_point(shape = 21) +
+    geom_vline(xintercept = 0, linetype = "dashed") +
+    facet_wrap(~ title, scales = "free") +
+    scale_color_manual(values = c("significantly positive (p < 0.05)" = "#8C1C13", 
+                                  "significantly negative (p < 0.05)" = "#22577A", 
+                                  "not-significant (p > 0.05)" = "#6C757D")) +
+    scale_fill_manual(values = c("significantly positive (p < 0.05)" = "#BF4342", 
+                                 "significantly negative (p < 0.05)" = "#38A3A5", 
+                                 "not-significant (p > 0.05)" = "#CED4DA")) +
+    labs(x = "Standardized Estimate", y = "") +
+    theme(legend.position = "bottom", 
+          panel.background = element_rect(fill = "white", color = "black"), 
+          panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
+          strip.background = element_blank(), 
+          legend.title = element_blank(), 
+          legend.key = element_blank(), 
+          strip.text = element_text(face = "bold", size = 12), 
+          legend.text = element_text(size = 14), 
+          axis.text = element_text(size = 12))
+  
+  # Save the plot generated
+  ggsave(file.out, plot.estimate.out, width = 30, height = 14, 
+         units = "cm", dpi = 600, bg = "white")
+  
+  # Return the files generated
+  return(file.out)
+  
+}
 
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #### -- Plots for methods and supplementary ------------------
