@@ -119,8 +119,7 @@ make_plots_analysis1 = function(data_explanatory, data_services, service_table,
   
   
   # Identify your explanatory and response variables
-  explanatory_vars <- c("ba.tot", "dqm", "str.div", "shannon", "richness", 
-                        "elev", "pca_clim")
+  explanatory_vars <- c("ba.tot", "dqm", "str.div", "shannon", "elev", "pca_clim")
   response_vars <- service_table$service
   
   # First, join the two datasets
@@ -329,6 +328,7 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
     data.i = data.plot %>%
       left_join(temporal_trend %>% 
                   filter(service == service_table$service[i]) %>%
+                  mutate(estimate = ifelse(pval < 0.05, estimate, 0)) %>%
                   select(ecoregion, estimate), 
                 by = "ecoregion")
     
@@ -414,7 +414,8 @@ make_plot_analysis2 = function(temporal_trend, data_explanatory_ser,
               by = "service") %>%
     mutate(S = case_when(conf.low > 0 ~ "significantly positive (p < 0.05)", 
                          conf.high < 0 ~ "significantly negative (p < 0.05)", 
-                         TRUE ~ "not-significant (p > 0.05)")) %>%
+                         TRUE ~ "not-significant (p > 0.05)"), 
+           title = paste0("Trend in \n", gsub("\\(.+\\)", "", title), " (%/yr)")) %>%
     ggplot(aes(x = estimate, y = term, color = S, fill = S)) +
     geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
     geom_point(shape = 21) +

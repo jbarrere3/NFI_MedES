@@ -1038,10 +1038,12 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table){
       filter(year == min(year, na.rm = TRUE)) %>%
       summarize(mean = mean(service.value, na.rm = TRUE)))$mean
     # - Calculate change in percentage
-    data.i = data.i %>% mutate(service.trend.percent = 100*(service.value - s0.i)/s0.i)
+    data.i = data.i %>% 
+      mutate(service.trend.percent = 100*(service.value - s0.i)/s0.i, 
+             time = year - min(data.i$year, na.rm = TRUE))
     
     # Run model depending on the distribution
-    model.i = lm(service.trend.percent ~ 0 + year, data = data.i)
+    model.i = lm(service.trend.percent ~ 0 + time, data = data.i)
     
     # Output of the model
     stat.i = tidy(model.i, conf.int = TRUE) %>% filter(term != "(Intercept)")
