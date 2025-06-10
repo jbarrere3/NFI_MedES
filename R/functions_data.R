@@ -147,8 +147,9 @@ format_tree = function(NFIMed_plot, FrenchNFI_tree_raw, FrenchNFI_species){
     # Format the status of the tree
     mutate(status = case_when(VEGET == "0" ~ "alive",
                               VEGET %in% c("6", "7") ~ "harvested",
-                              VEGET %in% c("1", "2", "5", "A", "C", "M", "T") ~ "dead",
-                              VEGET == "N" ~ "lost")) %>%
+                              VEGET %in% c("2", "5", "M", "T") ~ "dead",
+                              VEGET == "N" ~ "lost", 
+                              VEGET %in% c("A", "C", "1") ~ "dead.chablis")) %>%
     # Keep columns of interest
     select(IDT = A, IDP, ESPAR, species, status, dbh, ba, height = HTOT, 
            height.cut = HDEC, age = AGE, age.130 = AGE13, trunk.length = LFSD, 
@@ -542,9 +543,72 @@ get_services_flora = function(NFIMed_flora, flora.species.with.score){
 #' @param coef_volume_file file containing tree volume coefficients from Deleuze et al. 2014
 #' @param wood.density_file file containing tree density from XyloDensMap (Leban et al.)
 #' @param tree.species_info tree-level taxonomic information
+#' @param FrenchNFI_ecology_raw Raw ecological data from the French NFI
+#' @param elevation_raster shapefile containing elevation at national scale
 get_services_tree = function(
     NFIMed_tree, NFIMed_plot, NFIMed_deadwood, FrenchNFI_species, 
-    coef_allometry_file, coef_volume_file, wood.density_file, tree.species_info){
+    coef_allometry_file, coef_volume_file, wood.density_file, tree.species_info, 
+    FrenchNFI_ecology_raw, elevation_raster){
+  
+  # - Read elevation raster
+  raster_elev = terra::rast(elevation_raster)
+  # - Extract raster values
+  NFIMed_plot$elev <- as.numeric(terra::extract(
+    raster_elev, cbind(NFIMed_plot$longitude, NFIMed_plot$latitude))[, 1])
+  # - Add classification based on location
+  plots_classif = NFIMed_plot %>%
+    # in which biome / mountain range the plot is located
+    mutate(region = case_when(
+      ecoregion %in% c("J10", "J21", "J22", "J23", "J24", 
+                       "J30", "J40", "K11", "K12", "K12") ~ "med", 
+      ecoregion %in% c("H10", "H21", "H22", "H30", "H41", "H42") ~ "alps",
+      ecoregion %in% c("D11", "D12") ~ "vosges", 
+      ecoregion %in% c("I11", "I12", "I13", "I21", "I22") ~ "pyr", 
+      TRUE ~ "other"
+    )) %>%
+    # Treshold to use for species number (subalpine, med or normal)
+    mutate(IBP_A_category = case_when(
+      elev > 1700 & region %in% c("pyr", "alps") ~ "subalpine", 
+      elev > 1100 & region == "vosges" ~ "subalpine", 
+      region == "med" ~ "med", 
+      TRUE ~ "normal"
+    )) 
+  
+  # Cover per strata and per plot
+  strata_per_plot = FrenchNFI_ecology_raw %>%
+    mutate(strata_herb = HERB/10, 
+           strata_shrub = LIGN1/10, 
+           strata_tree = LIGN2/10) %>%
+    filter(IDP %in% NFIMed_plot$IDP) %>%
+    select(IDP, strata_herb, strata_shrub, strata_tree)
+  
+  # Get factor A of the Index of biodiversity potential (IBP)
+  IBP_A = NFIMed_tree %>%
+    mutate(genus = gsub("\\ .+", "", species)) %>%
+    select(IDP, genus) %>%
+    distinct() %>%
+    left_join(plots_classif %>% select(IDP, IBP_A_category), by = "IDP") %>%
+    mutate(countable = case_when(
+      genus %in% c("Abies", "Acer", "Alnus", "Betula", "Carpinus", "Castanea", 
+                   "Fagus", "Fraxinus", "Larix", "Malus", "Picea", "Pinus", 
+                   "Populus", "Prunus", "Pyrus", "Quercus", "Salix", "Sorbus", 
+                   "Taxus", "Tilia", "Ulmus") ~ 1, 
+      genus %in% c("Arbutus", "Phillyrea", "Celtis", "Olea") & IBP_A_category == "med" ~ 1, 
+      TRUE ~ 0)) %>%
+    group_by(IDP, IBP_A_category) %>%
+    summarize(ngenus = sum(countable, na.rm = TRUE)) %>%
+    ungroup() %>%
+    mutate(IBP_A = case_when(
+      IBP_A_category == "normal" & ngenus < 3 ~ 0, 
+      IBP_A_category == "normal" & ngenus %in% c(3,4) ~ 2, 
+      IBP_A_category == "normal" & ngenus > 4 ~ 5, 
+      IBP_A_category == "med" & ngenus < 3 ~ 0, 
+      IBP_A_category == "med" & ngenus == 3 ~ 2, 
+      IBP_A_category == "med" & ngenus > 3 ~ 5, 
+      IBP_A_category == "subalpine" & ngenus == 1 ~ 0, 
+      IBP_A_category == "subalpine" & ngenus == 2 ~ 2, 
+      IBP_A_category == "subalpine" & ngenus > 2 ~ 5)) %>%
+    select(IDP, IBP_A)
   
   
   # - Read and process raw data
@@ -641,10 +705,8 @@ get_services_tree = function(
   
   
   
-  ## - Calculate carbon per tree - ##
-  out = NFIMed_tree %>%
-    
-    # GET TREE HEIGHT FOR ALL INDIVIDUAL TREES
+  ## - Calculate height per tree from allometric coefficients - ##
+  height_per_tree = NFIMed_tree %>%
     # - Add plot structure (regular or irregular)
     left_join(NFIMed_plot %>% select(IDP, str), by = "IDP") %>%
     # - Add allometry coefficients
@@ -685,8 +747,90 @@ get_services_tree = function(
            height0.rectif.allom = ifelse(height0.allometry < 5, 5, height0.allometry)) %>%
     # - Remove residual NAs in plots where there are trees with unknown height or weight
     group_by(IDP) %>% mutate(anyNA = any(is.na(height)) | any(is.na(weight))) %>% 
-    ungroup() %>% filter(!anyNA) %>%
-    
+    ungroup() %>% filter(!anyNA)
+  
+  # - Get factor B of the Index of Biodiversity potential (IBP)
+  IBP_B = height_per_tree %>%
+    select(IDP, ba, height) %>%
+    # Classify each tree in vertical strata based on its height
+    left_join(plots_classif %>% select(IDP, IBP_A_category), by = "IDP") %>%
+    mutate(strata = case_when(
+      height < 7 & IBP_A_category != "med" ~ "shrub", 
+      height >= 7 & height < 20 & IBP_A_category != "med" ~ "tree_low", 
+      height >= 20 & IBP_A_category != "med" ~ "tree_high", 
+      height < 5 & IBP_A_category == "med" ~ "shrub", 
+      height >= 5 & height < 15 & IBP_A_category == "med" ~ "tree_low", 
+      height >= 15 & IBP_A_category == "med" ~ "tree_high")) %>%
+    # Calculate the proportion in basal area of each strata
+    group_by(IDP, strata) %>%
+    summarize(ba.sum = sum(ba, na.rm = TRUE)) %>%
+    ungroup() %>% group_by(IDP) %>%
+    mutate(ba.prop = ba.sum/sum(ba.sum, na.rm = TRUE)) %>%
+    ungroup() %>% select(IDP, strata, ba.prop) %>%
+    pivot_wider(names_from = "strata", values_from = "ba.prop") %>%
+    mutate(tree_low = ifelse(is.na(tree_low), 0, tree_low), 
+           tree_high = ifelse(is.na(tree_high), 0, tree_high)) %>%
+    # Calculate final cover percentage per strata based on plot-level info
+    left_join(strata_per_plot, by = "IDP") %>%
+    mutate(strata_tree_low = strata_tree*(tree_low + tree_high), 
+           strata_tree_high = strata_tree*tree_high) %>%
+    mutate(strata1 = ifelse(strata_herb >= 0.1, 1, 0), 
+           strata2 = ifelse(strata_shrub >= 0.1, 1, 0), 
+           strata3 = ifelse(strata_tree_low >= 0.1, 1, 0), 
+           strata4 = ifelse(strata_tree_high >= 0.1, 1, 0), 
+           strata_sum = strata1 + strata2 + strata3 + strata4) %>%
+    # Finalize calculation of IBP
+    mutate(IBP_B = case_when(strata_sum < 3 ~ 0, 
+                             strata_sum == 3 ~ 2, 
+                             strata_sum == 4 ~ 5)) %>%
+    select(IDP, IBP_B)
+  
+  # Get factors C, D and E from tree level data
+  IBP_CDE = NFIMed_tree %>%
+    mutate(genus = gsub("\\ .+", "", species)) %>%
+    select(IDP, genus, status, dbh) %>%
+    left_join(plots_classif %>% select(IDP, IBP_A_category), by = "IDP") %>%
+    # Factor C : Large deadwood still standing 
+    mutate(indiv_C = case_when(
+      (genus %in% c("Sorbus", "Pyrus", "Malus") | IBP_A_category %in% c("med", "subalpine")) & 
+        status == "dead" & dbh >= 300 ~ TRUE, 
+      !(genus %in% c("Sorbus", "Pyrus", "Malus") | IBP_A_category %in% c("med", "subalpine")) & 
+        status == "dead" & dbh >= 400 ~ TRUE, 
+      TRUE ~ FALSE)) %>%
+    # Factor D : Large deadwood lying on the floor
+    mutate(indiv_D = case_when(
+      (genus %in% c("Sorbus", "Pyrus", "Malus") | IBP_A_category %in% c("med", "subalpine")) & 
+        status == "dead.chablis" & dbh >= 300 ~ TRUE, 
+      !(genus %in% c("Sorbus", "Pyrus", "Malus") | IBP_A_category %in% c("med", "subalpine")) & 
+        status == "dead.chablis" & dbh >= 400 ~ TRUE, 
+      TRUE ~ FALSE)) %>%
+    # Factor E : Large trees still alive
+    mutate(indiv_E = case_when(
+      (genus %in% c("Sorbus", "Pyrus", "Malus") | IBP_A_category == "subalpine") & 
+        status == "alive" & dbh >= 450 ~ TRUE, 
+      IBP_A_category == "med" & status == "alive" & dbh >= 600 ~ TRUE, 
+      IBP_A_category == "normal" & status == "alive" & dbh >= 700 ~ TRUE, 
+      TRUE ~ FALSE)) %>%
+    # Calculate each factor based on the occurence of any tree in the category at plot scale
+    group_by(IDP) %>%
+    summarize(IBP_C = ifelse(any(indiv_C), 5, 0), 
+              IBP_D = ifelse(any(indiv_D), 5, 0), 
+              IBP_E = ifelse(any(indiv_E), 5, 0)) %>%
+    ungroup()
+  
+  # Finalize calculation of IBP
+  IBP = NFIMed_plot %>% 
+    # Add each factor to the plot dataset
+    select(IDP) %>%
+    left_join(IBP_A, by = "IDP") %>%
+    left_join(IBP_B, by = "IDP") %>%
+    left_join(IBP_CDE, by = "IDP") %>%
+    # Sum to get the IBP, and divide by maximum score to get percentage
+    mutate(IBP_absolute = IBP_A + IBP_B + IBP_C + IBP_D + IBP_E, 
+           IBP_relative = IBP_absolute/25*100)
+  
+  # - Final dataset with the calculation of carbon metrics
+  out = height_per_tree %>%
     # GET TREE AERIAL VOLUME FROM EMERGE COEFFICIENTS
     # - join volume coefficients
     left_join(coef_volume_per_species, by = "species") %>%
@@ -729,10 +873,12 @@ get_services_tree = function(
     left_join(deadwood.per.plot, by = "IDP") %>%
     mutate(volume_deadwood_m3.ha = volume_deadwood.standing_m3.ha + volume_deadwood.lying_m3.ha, 
            Cstock_t.ha = Cstock_deadwood.lying_kg.ha/1000 + Cstock_standing_t.ha) %>%
+    # - Add the Index of Biodiversity potential (IBP)
+    left_join(IBP, by = "IDP") %>%
     select(IDP, Csequestr_kg.ha.yr, 
            timber.volume_m3.ha,
-           # volume_deadwood_m3.ha, 
-           Cstock_t.ha)
+           Cstock_t.ha, 
+           IBP_percent = IBP_relative)
   
   # Return output
   return(out)

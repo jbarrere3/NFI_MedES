@@ -89,11 +89,11 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
   plot.out = plot_grid(
     plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 2), 
     plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 2),
-    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
+    nrow = 1, rel_widths = c(1, 0.333), labels = c("(a) ES capacity", "(b) ES flux"), 
     scale = 0.9, align = "hv", label_size = 22)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 38, height = 25, 
+  ggsave(file.out, plot.out, width = 40, height = 25, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
@@ -357,7 +357,7 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
   plot.out = plot_grid(plotlist = plotlist.out, align = "hv", nrow = 2, scale = 0.9)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 35, height = 25, 
+  ggsave(file.out, plot.out, width = 40, height = 25, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported

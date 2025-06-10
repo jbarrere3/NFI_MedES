@@ -122,7 +122,8 @@ list(
   # - from tree-level data
   tar_target(services_tree, get_services_tree(
     NFIMed_tree, NFIMed_plot, NFIMed_deadwood, FrenchNFI_species, 
-    coef_allometry_file, coef_volume_file, wood.density_file, tree.species_info)),
+    coef_allometry_file, coef_volume_file, wood.density_file, tree.species_info, 
+    FrenchNFI_ecology_raw, elevation_raster)),
   # - erosion mitigation from ecological data
   tar_target(services_erosion, get_service_erosion(
     FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil, tree.species_info)),
@@ -133,12 +134,14 @@ list(
   # - table with the list and title of each service
   tar_target(service_table, data.frame(
     service = c("ab.medicinal", "ab.edibility", "Csequestr_kg.ha.yr", 
-                "Cstock_t.ha", "timber.volume_m3.ha", "erosion.mitig"), 
+                "Cstock_t.ha", "timber.volume_m3.ha", "erosion.mitig", "IBP_percent"), 
     title = c("Abundance of\nmedicinal plants",  "Abundance of\nedible plants", 
               "Carbon sequestrated\n(kg.ha.yr)", "Carbon stock\n(t.ha)", 
-              "Timber volume\n(m3.ha)", "Erosion mitigation\n(t.ha.yr)"), 
-    type = c("capacity", "capacity", "flux", "capacity", "capacity", "flux"), 
-    distrib = c("beta", "beta", "pos0", "pos", "pos0", "pos"))),
+              "Timber volume\n(m3.ha)", "Erosion mitigation\n(t.ha.yr)", 
+              "Index of Biodiversity\nPotential (%)"), 
+    type = c("capacity", "capacity", "flux", "capacity", "capacity", "flux", 
+             "capacity"), 
+    distrib = c("beta", "beta", "pos0", "pos", "pos0", "pos", "pos0"))),
   
   # Compile all explanatory variables
   tar_target(data_explanatory, compile_explanatory(
