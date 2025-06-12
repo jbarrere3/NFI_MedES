@@ -623,14 +623,33 @@ get_services_tree = function(
                  select(`species.original` = `lib_cdref`, 
                         `espar` = `// espar`)), 
               by = "species.original") %>%
-    # Attribute the code of beech when parameters are unknown (/!\ TO CHANGE LATER)
-    mutate(espar = ifelse(espar %in% coef_allometry_raw$espar, espar, "9")) %>%
     # Join coefficients 
     left_join(coef_allometry_raw, by = "espar") %>%
     # Only keep columns of interest
-    select(species = species.original, a1, a2, a3, a4, a5, a6, a7, b1, b2, b3, b4, b5, d1) %>%
-    replace(is.na(.), 0) %>%
-    distinct
+    select(species.original, species, genus, family, group, a1, a2, a3, a4, a5, a6, a7, b1, b2, b3, b4, b5, d1) %>%
+    # Gather to calculate coefficients average acorss family, group and genus
+    gather(key = coefficient, value = value_species, a1, a2, a3, a4, a5, a6, a7, b1, b2, b3, b4, b5, d1) %>%
+    # Calculate at genus level
+    group_by(genus) %>% 
+    mutate(value_genus = mean(value_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Calculate at family level
+    group_by(family) %>% 
+    mutate(value_family = mean(value_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Calculate at group level
+    group_by(group) %>% 
+    mutate(value_group = mean(value_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Final coef value
+    mutate(value = case_when(
+      !is.na(value_species) ~ value_species, 
+      is.na(value_species) & !is.na(value_genus) ~ value_genus, 
+      is.na(value_species) & is.na(value_genus) & !is.na(value_family) ~ value_family, 
+      TRUE ~ value_group)) %>%
+    select(species = species.original, coefficient, value) %>%
+    pivot_wider(values_from = value, names_from = coefficient, values_fn = mean) %>%
+    distinct()
   
   # Process volume data
   # - Read raw volume data
@@ -955,6 +974,226 @@ get_service_erosion = function(FrenchNFI_ecology_raw, NFIMed_tree,
     mutate(erosion.mitig = R*LS_factor*K_factor*(1 - C)) %>%
     # Keep only columns of interest
     select(IDP, erosion.mitig)
+  
+  # Return output
+  return(out)
+  
+}
+
+
+#' Calculate micro-climate regulation
+#' @param NFIMed_tree NFI tree-level data formatted
+#' @param FrenchNFI_ecology_raw NFI raw ecological data
+#' @param coef_allometry_file Data with allometry coefficients from Savine et al.
+#' @param tree.species_info dataframe with tree-species level information
+#' @param FrenchNFI_species original label of tree species in NFI data
+#' @param data_explanatory explanatory variables at plot level
+#' @param file.sca.genus Shade casting ability (SCA) per genus from Kaber et al.
+#' @param file.sca.species Shade casting ability (SCA) per species from Kaber et al.
+#' @param file.climate multi-layer raster with hourly temperature data
+#' @param T_confort numeric. temperature above which we consider that there is discomfort
+get_service_microclim = function(NFIMed_tree, FrenchNFI_ecology_raw, coef_allometry_file, 
+                                 tree.species_info, FrenchNFI_species, data_explanatory, 
+                                 file.sca.genus, file.sca.species, file.climate, 
+                                 T_confort){
+  
+  #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  # Part one - Calculate the slope 
+  print("Calculating the slope for each NFI plot")
+  
+  # Read shade casting ability (SCA) at species and genus level from Kaber et al. 2021
+  sca.genus = fread(file.sca.genus)
+  sca.species = fread(file.sca.species)
+  
+  # Add SCA in the tree species information
+  data_species = tree.species_info %>%
+    left_join(sca.species %>% rename(species = Species, sca_species = SCA), by = "species") %>%
+    left_join(sca.genus %>% rename(genus = Genus, sca_genus = SCA), by = "genus") %>%
+    # Calculate at family level
+    group_by(family) %>% 
+    mutate(sca_family = mean(sca_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Calculate at group level
+    group_by(group) %>%
+    mutate(sca_group = mean(sca_species, na.rm = TRUE)) %>% 
+    ungroup() %>%
+    # Calculate final SCA
+    mutate(sca = case_when(
+      !is.na(sca_species) ~ sca_species, 
+      is.na(sca_species) & !is.na(sca_genus) ~ sca_genus, 
+      is.na(sca_species) & is.na(sca_genus) & !is.na(sca_family) ~ sca_family, 
+      TRUE ~ sca_group)) %>%
+    select(species.original, species, group, sca)
+  
+  # - Read and process raw data
+  coef_allometry_raw = fread(coef_allometry_file) %>%
+    # Remove 0 in one letter codes
+    mutate(espar = ifelse(espar %in% paste0("0", c(1:9)), 
+                          gsub("0", "", espar), espar))
+  # - Format species data to add allometry coefficients
+  coef_allometry_per_species = tree.species_info %>%
+    # Add species code 
+    left_join((FrenchNFI_species %>%
+                 select(`species.original` = `lib_cdref`, 
+                        `espar` = `// espar`)), 
+              by = "species.original") %>%
+    # Join coefficients 
+    left_join(coef_allometry_raw, by = "espar") %>%
+    # Only keep columns of interest
+    select(species.original, species, genus, family, group, a1, a2, a3, a4, a5, a6, a7, b1, b2, b3, b4, b5, d1) %>%
+    # Gather to calculate coefficients average acorss family, group and genus
+    gather(key = coefficient, value = value_species, a1, a2, a3, a4, a5, a6, a7, b1, b2, b3, b4, b5, d1) %>%
+    # Calculate at genus level
+    group_by(genus) %>% 
+    mutate(value_genus = mean(value_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Calculate at family level
+    group_by(family) %>% 
+    mutate(value_family = mean(value_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Calculate at group level
+    group_by(group) %>% 
+    mutate(value_group = mean(value_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Final coef value
+    mutate(value = case_when(
+      !is.na(value_species) ~ value_species, 
+      is.na(value_species) & !is.na(value_genus) ~ value_genus, 
+      is.na(value_species) & is.na(value_genus) & !is.na(value_family) ~ value_family, 
+      TRUE ~ value_group)) %>%
+    select(species = species.original, coefficient, value) %>%
+    pivot_wider(values_from = value, names_from = coefficient, values_fn = mean) %>%
+    distinct()
+  
+  
+  ## - Calculate height per tree from allometric coefficients - ##
+  data_slope = NFIMed_tree %>%
+    # - Add plot structure (regular or irregular)
+    left_join(data_explanatory %>% select(IDP, str), by = "IDP") %>%
+    # - Add allometry coefficients
+    left_join(coef_allometry_per_species, by = "species") %>%
+    # - Calculate plot quadratic diameter
+    group_by(IDP) %>%
+    mutate(dbh_cm = dbh/10, 
+           dbh0_cm = dbh/10 - increment*100, 
+           ba.0 = pi*(dbh0_cm/200)^2,
+           dbh2.W_cm = (dbh_cm^2)*weight, 
+           dqm_cm = sqrt(sum(dbh2.W_cm, na.rm = TRUE)/sum(weight, na.rm  = TRUE))) %>%
+    ungroup() %>%
+    # - Calculate tree height from allometric relations
+    mutate(height.allometry = case_when(
+      str == "uneven" ~ 1.3 + a1*(1 + a2)*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b2)*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))), 
+      str %in% c("cop", "nostr") ~ 1.3 + a1*(1 + a4)*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b4)*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))), 
+      str == "copfor" ~ 1.3 + a1*(1 + a3)*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*(1 + b3)*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))), 
+      str == "even" ~ 1.3 + a1*(1 + a5*ba)*(1 - exp(-a6*dqm_cm^a7))*(
+        1/(1 + (b1*exp(-b5*ba))/((dbh_cm/dqm_cm)^d1))))) %>%
+    # - use allometric height when no observed height
+    mutate(height = ifelse(is.na(height), height.allometry, height)) %>%
+    # - Restrict to variables and trees of interest 
+    filter(status == "alive") %>%
+    select(IDP, species.original = species, dbh, ba, height, age.130, weight) %>%
+    # - Add species information
+    left_join(data_species, by = "species.original") %>%
+    # - Calculate variables needed at plot level
+    mutate(conifer = ifelse(group == "gymnosperms", 1, 0), 
+           ba.ha = ba*weight, 
+           strata_highshrub = ifelse(height < 7, 1, 0)) %>%
+    group_by(IDP) %>%
+    summarize(conifer_prop = sum(ba.ha*conifer, na.rm = TRUE)/sum(ba.ha, na.rm = TRUE), 
+              highshrub_prop = sum(ba.ha*strata_highshrub, na.rm = TRUE)/sum(ba.ha, na.rm = TRUE), 
+              stem_density = sum(weight, na.rm = TRUE), 
+              SCA = sum(ba.ha*sca, na.rm = TRUE)/sum(ba.ha, na.rm = TRUE), 
+              age = mean(age.130, na.rm = TRUE), 
+              ba.ha.plot = sum(ba.ha, na.rm = TRUE), 
+              height = sum(height*weight, na.rm = TRUE)/sum(weight, na.rm = TRUE)) %>%
+    # Last calculations
+    mutate(conifer = ifelse(conifer_prop > 0.5, 1, 0)) %>%
+    left_join((FrenchNFI_ecology_raw %>%
+                 mutate(lowshrub_cover = LIGN1/10, 
+                        tree_cover = LIGN2/10) %>%
+                 select(IDP, lowshrub_cover, tree_cover)), by = "IDP") %>%
+    mutate(cover_high_shrubs = highshrub_prop*tree_cover*100, 
+           cover_low_shrubs = lowshrub_cover*100, 
+           cover_trees = (1 - highshrub_prop)*tree_cover*100) %>%
+    # Filter plots to only keep those in the range of calibratino of the model
+    filter(stem_density > 200 & ba.ha.plot > 23 & age > 50) %>%
+    # Fit the slope model
+    mutate(slope = 1.436 + 0.1179*conifer - 0.04875*SCA + 0.001397*age - 0.01778*height - 
+             0.0003203*stem_density - 0.0004234*cover_low_shrubs - 
+             0.0009509*cover_high_shrubs) %>%
+    left_join(data_explanatory %>% select(IDP, latitude, longitude), by = "IDP") %>%
+    select(IDP, longitude, latitude, slope)
+  
+  #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+  # Part two - Calculate climate mitigation 
+  print("Calculating microclimate regulation")
+  
+  # Read raster file
+  clim_rast = rast(file.climate)
+  
+  # Create custom time sequence (May 1 to Oct 31, 2010, 8am-8pm)
+  start_date <- as.POSIXct("2010-05-01 08:00:00")
+  end_date <- as.POSIXct("2010-10-31 20:00:00")
+  
+  # Generate sequence of hours (only 8am-8pm each day)
+  all_hours <- seq(from = start_date, to = end_date, by = "1 hour")
+  daytime_hours <- all_hours[hour(all_hours) >= 8 & hour(all_hours) <= 20]
+  
+  # Check that is matches raster dimension
+  if(length(daytime_hours) != dim(clim_rast)[3]) print("Issue with number of observations")
+  
+  # Initialize the output dataframe
+  out = data.frame(IDP = data_slope$IDP, 
+                   climregul_dh.yr = NA_real_)
+  
+  # Loop on all plots for which we have data on slope
+  for(i in 1:dim(out)[1]){
+    # Printer (every 10 plots)
+    if(floor(i/10) == i/10) print(paste0("--- processing plot ", i, "/", dim(out)[1]))
+    
+    # Extract coordinates and slope for plot i
+    slope.i = data_slope$slope[i]
+    lon.i <- data_slope$longitude[i]  
+    lat.i <- data_slope$latitude[i] 
+    point.i <- vect(matrix(c(lon.i, lat.i), ncol = 2), crs = "EPSG:4326")
+    
+    # First, extract values for your specific location (as x,y coordinates)
+    temp.i <- extract(clim_rast, point.i, ID = FALSE) %>% 
+      as.numeric() %>% na.omit()
+    
+    # Check that the point is not in the sea
+    if(length(temp.i) > 0){
+      
+      # Create the data frame
+      data.i <- data.frame(datetime = daytime_hours,
+                           temp_c = temp.i - 273.15) %>% 
+        mutate(month = month(datetime),
+               day = day(datetime),
+               hour = hour(datetime)) %>% 
+        select(month, day, hour, temp_c) %>% 
+        arrange(month, day, hour) %>%
+        # Get equilibrium value 
+        group_by(month) %>% mutate(temp_month = mean(temp_c)) %>% ungroup() %>%
+        mutate(equilibrium = -1.34268 + 0.98*temp_month) %>%
+        # Calculate microclimate
+        mutate(temp_micro = equilibrium*(1 - slope.i) + slope.i*temp_c) %>%
+        # Calculate the attenuation or amplification obove T_confort
+        mutate(temp_c = ifelse(temp_c > T_confort, temp_c - T_confort, 0), 
+               temp_micro = ifelse(temp_micro > T_confort, temp_micro - T_confort, 0)) %>%
+        mutate(diff_clim = temp_c - temp_micro) 
+      
+      # Sum the degree hour difference
+      out$climregul_dh.yr[i] = sum(data.i$diff_clim)
+      
+    }
+    
+  }
+  
+  # Remove plots for which we couldn't extract climate
+  out = out %>% drop_na()
   
   # Return output
   return(out)

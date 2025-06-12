@@ -25,7 +25,7 @@ packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table",
                  "sp", "sf", "stringr", "taxize", "rnaturalearth", "WorldFlora",
                  "rnaturalearthdata", "cowplot", "readxl", "terra", "stats", 
                  "factoextra", "purrr", "broom", "car", "tweedie", "glmnet", 
-                 "patchwork", "statmod")
+                 "patchwork", "statmod", "lubridate")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -111,6 +111,10 @@ list(
   tar_target(coef_volume_file, "data/Carbon/CoefficientsEmerge.csv", format = "file"),
   tar_target(wood.density_file, "data/Carbon/WOODBASICDENSITYFOR156TREEFORESTSPECIES-11-04-2022.xlsx", 
              format = "file"),
+  # - Files necessary for the calculation of microclimate regulation
+  tar_target(file.sca.genus, "data/Traits/sca_genus.csv", format = "file"), 
+  tar_target(file.sca.species, "data/Traits/sca_species.csv", format = "file"),
+  tar_target(file.climate, "data/Climate/data_0.nc", format = "file"),
   
   # Filter plots to remove outliers
   tar_target(plots_filtered, filter_plots(NFIMed_tree)),
@@ -127,6 +131,11 @@ list(
   # - erosion mitigation from ecological data
   tar_target(services_erosion, get_service_erosion(
     FrenchNFI_ecology_raw, NFIMed_tree, clim_and_soil, tree.species_info)),
+  # - Micro-climate regulation
+  tar_target(service_microclimate, get_service_microclim(
+    NFIMed_tree, FrenchNFI_ecology_raw, coef_allometry_file, tree.species_info, 
+    FrenchNFI_species, data_explanatory, file.sca.genus, file.sca.species, 
+    file.climate, T_confort = 23)),
   # - merge data together
   tar_target(data_services, merge_service(
     list.in = list(flora = services_flora, tree = services_tree, erosion = services_erosion), 
