@@ -87,13 +87,13 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
   
   # Assemble plots
   plot.out = plot_grid(
-    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 2), 
-    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 2),
-    nrow = 1, rel_widths = c(1, 0.333), labels = c("(a) ES capacity", "(b) ES flux"), 
+    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 3), 
+    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 3),
+    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
     scale = 0.9, align = "hv", label_size = 22)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 40, height = 25, 
+  ggsave(file.out, plot.out, width = 35, height = 35, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
@@ -112,8 +112,7 @@ make_plots_analysis1 = function(data_explanatory, data_services, service_table,
                                 dir.diagnostic, file.out){
   
   # Create if needed directory for diagnostic plots and main plot
-  create_dir_if_needed(file.out)
-  files.diagnostic = paste0(dir.diagnostic, "/diagnostic_", 
+  files.diagnostic = paste0(dir.diagnostic, "/diagnostic_",
                             service_table$service, ".jpg")
   create_dir_if_needed(files.diagnostic[1])
   
@@ -146,6 +145,8 @@ make_plots_analysis1 = function(data_explanatory, data_services, service_table,
       model <- glm(formula_full, data = data, family = gaussian(link = "log"))
     } else if (distribution == "beta") {
       model <- glm(formula_full, data = data, family = quasibinomial(link = "logit"))
+    } else if (distribution == "norm") {
+      model <- glm(formula_full, data = data, family = gaussian)
     } else if (distribution == "pos0") {
       # Tweedie GLM with power parameter between 1 (Poisson) and 2 (Gamma)
       # We estimate the power parameter first
@@ -171,6 +172,8 @@ make_plots_analysis1 = function(data_explanatory, data_services, service_table,
           model <- glm(formula_reduced, data = data, family = gaussian(link = "log"))
         } else if (distribution == "beta") {
           model <- glm(formula_reduced, data = data, family = quasibinomial(link = "logit"))
+        } else if (distribution == "norm") {
+          model <- glm(formula_reduced, data = data, family = gaussian)
         }
         
         vif_results <- car::vif(model)
@@ -318,22 +321,29 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
     select(ecoregion = codeser)
   
   
-  # Initialize plotlist
-  plotlist.out = vector(mode = "list", length = dim(service_table)[1])
+  # Initialize the lists that will contain each plot
+  plotlist.flux.out = vector(
+    mode = "list", length = length(which(service_table$type == "flux")))
+  plotlist.capacity.out = vector(
+    mode = "list", length = length(which(service_table$type == "capacity")))
+  
+  # Initialize counter for capacity and flux
+  k_flux = 0
+  k_capacity = 0
   
   # Loop on all variables to plot
-  for(i in 1:length(plotlist.out)){
+  for(i in 1:dim(service_table)[1]){
     
     # Satial data for service i
     data.i = data.plot %>%
       left_join(temporal_trend %>% 
                   filter(service == service_table$service[i]) %>%
-                  mutate(estimate = ifelse(pval < 0.05, estimate, 0)) %>%
+                  mutate(estimate = ifelse(pval < 0.05 & n >= 50, estimate, 0)) %>%
                   select(ecoregion, estimate), 
                 by = "ecoregion")
     
     # Make the plot for service i
-    plotlist.out[[i]] = ne_countries(scale = "medium", returnclass = "sf") %>%
+    plot.i = ne_countries(scale = "medium", returnclass = "sf") %>%
       ggplot(aes(geometry = geometry)) +
       geom_sf(fill = "#778DA9", show.legend = F, size = 0.2) + 
       geom_sf(data.i, mapping = aes(fill = estimate)) +
@@ -351,13 +361,26 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
       ggtitle(paste0("Trend in \n", gsub("\\(.+\\)", "", service_table$title[i]), 
                      " (%/yr)"))
     
+    # Add plot i to the right list
+    if(service_table$type[i] == "capacity"){
+      k_capacity = k_capacity + 1
+      plotlist.capacity.out[[k_capacity]] = plot.i
+    }
+    if(service_table$type[i] == "flux"){
+      k_flux = k_flux + 1
+      plotlist.flux.out[[k_flux]] = plot.i
+    }
   }
   
   # Assemble plots
-  plot.out = plot_grid(plotlist = plotlist.out, align = "hv", nrow = 2, scale = 0.9)
+  plot.out = plot_grid(
+    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 3), 
+    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 3),
+    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
+    scale = 0.9, align = "hv", label_size = 22)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 40, height = 25, 
+  ggsave(file.out, plot.out, width = 35, height = 35, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported

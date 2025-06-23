@@ -138,19 +138,21 @@ list(
     file.climate, T_confort = 23)),
   # - merge data together
   tar_target(data_services, merge_service(
-    list.in = list(flora = services_flora, tree = services_tree, erosion = services_erosion), 
+    list.in = list(flora = services_flora, tree = services_tree, 
+                   erosion = services_erosion, microclim = service_microclimate), 
     plots_filtered)),
   # - table with the list and title of each service
   tar_target(service_table, data.frame(
     service = c("ab.medicinal", "ab.edibility", "Csequestr_kg.ha.yr", 
-                "Cstock_t.ha", "timber.volume_m3.ha", "erosion.mitig", "IBP_percent"), 
+                "Cstock_t.ha", "timber.volume_m3.ha", "erosion.mitig", 
+                "IBP_percent", "climregul_dh.yr"), 
     title = c("Abundance of\nmedicinal plants",  "Abundance of\nedible plants", 
               "Carbon sequestrated\n(kg.ha.yr)", "Carbon stock\n(t.ha)", 
               "Timber volume\n(m3.ha)", "Erosion mitigation\n(t.ha.yr)", 
-              "Index of Biodiversity\nPotential (%)"), 
+              "Index of Biodiversity\nPotential (%)", "Climate regulation\n(degree-hour/year)"), 
     type = c("capacity", "capacity", "flux", "capacity", "capacity", "flux", 
-             "capacity"), 
-    distrib = c("beta", "beta", "pos0", "pos", "pos0", "pos", "pos0"))),
+             "capacity", "flux"), 
+    distrib = c("beta", "beta", "pos0", "pos", "pos0", "pos", "pos0", "norm"))),
   
   # Compile all explanatory variables
   tar_target(data_explanatory, compile_explanatory(

@@ -1223,7 +1223,8 @@ merge_service = function(list.in, plots_filtered){
   # Format into one dataframe with one service per column
   out = data %>% 
     # For a few data in carbon sequestration, slightly negative values instead of 0
-    mutate(service.value = ifelse(service.value < 0, 0, service.value)) %>%
+    mutate(service.value = ifelse(
+      service.value < 0 & service == "Csequestr_kg.ha.yr", 0, service.value)) %>%
     spread(key = "service", value = "service.value")
   
   # Return output dataframe
