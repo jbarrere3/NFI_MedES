@@ -152,7 +152,7 @@ list(
               "Index of Biodiversity\nPotential (%)", "Climate regulation\n(degree-hour/year)"), 
     type = c("capacity", "capacity", "flux", "capacity", "capacity", "flux", 
              "capacity", "flux"), 
-    distrib = c("beta", "beta", "pos0", "pos", "pos0", "pos", "pos0", "norm"))),
+    distrib = c("beta", "beta", "pos0", "pos0", "pos0", "pos", "pos0", "norm"))),
   
   # Compile all explanatory variables
   tar_target(data_explanatory, compile_explanatory(
@@ -162,6 +162,11 @@ list(
     FrenchNFI_plot_raw, data_explanatory, "export/fig/supplementary/figsup_pcastr.jpg")),
   tar_target(temporal_trend, get_temporal_trend(
     data_services, NFIMed_plot, service_table)),
+  
+  # Fit models
+  tar_target(models_plot, fit_models_plot(
+    data_explanatory, data_services, service_table)),
+  
   
   # Plot the data
   # - Methods
@@ -173,7 +178,7 @@ list(
     NFIMed_plot, data_services, service_table, sylvoER_shp_file, 
     "export/fig/fig_spatial.jpg"), format = "file"), 
   tar_target(fig_analysis1, make_plots_analysis1(
-    data_explanatory, data_services, service_table, "export/fig/supplementary/diag1", 
+    models_plot, service_table, "export/fig/supplementary/diag1",
     "export/fig/fig_model1.jpg"), format = "file"),
   tar_target(fig_map_trends, map_temporal_trend(
     temporal_trend, service_table, sylvoER_shp_file, 

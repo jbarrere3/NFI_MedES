@@ -103,12 +103,11 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
 
 
 #' Function to run the first par of the analysis
-#' @param data_explanatory table containing all explanatory variables
+#' @param models_plot List with the models fitted at plot level
 #' @param data_services data containing all services per plot
-#' @param service_table title, distribution of each service
 #' @param dir.diagnostic directory where to store diagnostic plots
 #' @param file.out name of the file for the main figure
-make_plots_analysis1 = function(data_explanatory, data_services, service_table, 
+make_plots_analysis1 = function(models_plot, service_table, 
                                 dir.diagnostic, file.out){
   
   # Create if needed directory for diagnostic plots and main plot
@@ -116,191 +115,71 @@ make_plots_analysis1 = function(data_explanatory, data_services, service_table,
                             service_table$service, ".jpg")
   create_dir_if_needed(files.diagnostic[1])
   
+  # Identify explanatory variables
+  terms = attr(terms(models_plot$models[[1]]), "term.labels")
+  explanatory_vars = terms[-unique(c(grep("2", terms), c(grep(":", terms))))]
   
-  # Identify your explanatory and response variables
-  explanatory_vars <- c("ba.tot", "dqm", "str.div", "shannon", "elev", "pca_clim")
-  response_vars <- service_table$service
+  # Initialize the lists that will contain each estimate plot
+  plotlist.flux.out = vector(
+    mode = "list", length = length(which(service_table$type == "flux")))
+  plotlist.capacity.out = vector(
+    mode = "list", length = length(which(service_table$type == "capacity")))
   
-  # First, join the two datasets
-  combined_data <- inner_join(data_explanatory, data_services, by = "IDP") %>%
-    mutate(across(all_of(explanatory_vars), ~ scale(., center = TRUE, scale = TRUE)))
+  # Initialize counter for capacity and flux
+  k_flux = 0
+  k_capacity = 0
   
-  
-  # Format response distributions dataset
-  response_distributions = service_table %>% select(
-    response_var = service, distribution = distrib) %>%
-    as_tibble()
-  
-  
-  
-  # Function to fit appropriate GLM based on distribution
-  fit_glm <- function(response_var, data, explanatory_vars, distribution) {
+  # Loop on all services
+  for(i in 1:dim(service_table)[1]){
     
-    print(paste0("Fitting models for ", response_var))
-    # Initial formula
-    formula_full <- as.formula(paste(response_var, "~", paste(explanatory_vars, collapse = " + ")))
+    # Make the estimate plot
+    plot.i = data.frame(var = names(coefficients(models_plot$models[[i]])), 
+                        estimate = as.numeric(coefficients(models_plot$models[[i]])), 
+                        lwr = models_plot$interval[[i]][, 1], 
+                        upr = models_plot$interval[[i]][, 2]) %>%
+      mutate(estimate.abs = abs(estimate)) %>%
+      filter(var != "(Intercept)") %>%
+      arrange(estimate.abs) %>%
+      mutate(var = factor(var, levels = .$var))  %>%
+      mutate(S = case_when(lwr > 0 ~ "significantly positive (p < 0.05)", 
+                           upr < 0 ~ "significantly negative (p < 0.05)", 
+                           TRUE ~ "not-significant (p > 0.05)")) %>%
+      ggplot(aes(x = estimate, y = var, color = S, fill = S)) +
+      geom_errorbarh(aes(xmin = lwr, xmax = upr), height = 0.2) +
+      geom_point(shape = 21) +
+      geom_vline(xintercept = 0, linetype = "dashed") +
+      scale_color_manual(values = c("significantly positive (p < 0.05)" = "#8C1C13", 
+                                    "significantly negative (p < 0.05)" = "#22577A", 
+                                    "not-significant (p > 0.05)" = "#6C757D")) +
+      scale_fill_manual(values = c("significantly positive (p < 0.05)" = "#BF4342", 
+                                   "significantly negative (p < 0.05)" = "#38A3A5", 
+                                   "not-significant (p > 0.05)" = "#CED4DA")) +
+      labs(x = "Standardized Estimate", y = "") +
+      theme(legend.position = "none", 
+            panel.background = element_rect(fill = "white", color = "black"), 
+            panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
+            axis.text = element_text(size = 12), 
+            plot.title = element_text(face = "bold", hjust = 0.5)) + 
+      ggtitle(service_table$title[i])
     
-    # Fit initial model based on distribution
-    if (distribution == "pos") {
-      model <- glm(formula_full, data = data, family = gaussian(link = "log"))
-    } else if (distribution == "beta") {
-      model <- glm(formula_full, data = data, family = quasibinomial(link = "logit"))
-    } else if (distribution == "norm") {
-      model <- glm(formula_full, data = data, family = gaussian)
-    } else if (distribution == "pos0") {
-      # Tweedie GLM with power parameter between 1 (Poisson) and 2 (Gamma)
-      # We estimate the power parameter first
-      # y <- data[[response_var]]
-      # tweedie_p <- tweedie.profile(y ~ 1, p.vec = seq(1.1, 1.9, by = 0.1))$p.max
-      model <- glm(formula_full, data = data, 
-                   family = tweedie(var.power = 1, link.power = 0)) # log link
-      
-    }
+    # Save diagnostic plot
+    ggsave(filename = files.diagnostic[i], plot = models_plot$diag[[i]],
+           width = 12, height = 5, dpi = 600 )
     
-    # Check VIF (except for Tweedie which doesn't support vif())
-    if (distribution != "pos0") {
-      vif_results <- car::vif(model)
-      
-      # Remove collinear variables iteratively
-      while (any(vif_results > 5)) {
-        worst_offender <- names(which.max(vif_results))
-        explanatory_vars <- setdiff(explanatory_vars, worst_offender)
-        formula_reduced <- as.formula(paste(response_var, "~", paste(explanatory_vars, collapse = " + ")))
-        
-        # Refit with reduced formula
-        if (distribution == "pos") {
-          model <- glm(formula_reduced, data = data, family = gaussian(link = "log"))
-        } else if (distribution == "beta") {
-          model <- glm(formula_reduced, data = data, family = quasibinomial(link = "logit"))
-        } else if (distribution == "norm") {
-          model <- glm(formula_reduced, data = data, family = gaussian)
-        }
-        
-        vif_results <- car::vif(model)
-      }
-    }
-    
-    return(model)
   }
   
+  # Assemble plots
+  plot.out = plot_grid(
+    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 3), 
+    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 3),
+    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
+    scale = 0.9, align = "hv", label_size = 22)
   
-  # Function to generate diagnostics
-  generate_diagnostics <- function(model, response_var, distribution) {
-    print(paste0("Generating diagnostics for model of ", response_var))
-    # Get residuals and fitted values
-    if (distribution == "pos0") {
-      # Tweedie requires special handling
-      residuals <- residuals(model, type = "pearson")
-      fitted <- fitted(model)
-      sqrt_abs_resid <- sqrt(abs(residuals))
-    } else {
-      residuals <- residuals(model, type = "deviance")
-      fitted <- fitted(model)
-      sqrt_abs_resid <- sqrt(abs(residuals))
-    }
-    
-    diag_data <- tibble(
-      fitted = fitted,
-      residuals = residuals,
-      sqrt_abs_resid = sqrt_abs_resid
-    )
-    
-    # Residuals vs Fitted
-    print("---plot residual vs fitted")
-    p1 <- ggplot(diag_data, aes(fitted, residuals)) +
-      geom_point(alpha = 0.6) +
-      geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-      geom_smooth(se = FALSE, color = "blue") +
-      labs(title = "Residuals vs Fitted", 
-           subtitle = paste("Distribution:", distribution),
-           x = "Fitted Values", y = "Residuals")
-    
-    # Q-Q Plot
-    print("---qqplot")
-    p2 <- ggplot(diag_data, aes(sample = residuals)) +
-      stat_qq() +
-      stat_qq_line(color = "red") +
-      labs(title = "Q-Q Plot", x = "Theoretical Quantiles", y = "Sample Quantiles")
-    
-    # Scale-Location
-    print("---scale-location")
-    p3 <- ggplot(diag_data, aes(fitted, sqrt_abs_resid)) +
-      geom_point(alpha = 0.6) +
-      geom_smooth(se = FALSE, color = "blue") +
-      labs(title = "Scale-Location", x = "Fitted Values", y = "√|Standardized Residuals|")
-    
-    # Combine plots
-    (p1 | p2 | p3) + 
-      plot_annotation(title = paste("Diagnostics for:", response_var))
-  }
-  
-  # Main analysis pipeline
-  analysis_results <- response_distributions %>%
-    mutate(
-      model = pmap(list(response_var, distribution), function(rv, dist) {
-        fit_glm(rv, combined_data, explanatory_vars, dist)
-      }),
-      diagnostics = pmap(list(model, response_var, distribution), generate_diagnostics),
-      tidy_results = map(model, ~ tidy(., conf.int = TRUE)),
-      glance_results = map(model, ~ glance(.))
-    )
-  
-  # Extract and save all diagnostics
-  walk2(analysis_results$diagnostics, analysis_results$response_var, ~ {
-    ggsave(
-      filename = paste0(dir.diagnostic, "/diagnostic_", .y, ".jpg"),
-      plot = .x, width = 12, height = 5, dpi = 600 )
-  })
-  
-  # Create comprehensive results table
-  final_results <- analysis_results %>%
-    select(response_var, distribution, tidy_results) %>%
-    unnest(tidy_results) %>%
-    filter(term != "(Intercept)") %>%
-    left_join(
-      analysis_results %>%
-        select(response_var, glance_results) %>%
-        unnest(glance_results),
-      by = "response_var") %>%
-    select(response_var, distribution, term, estimate, conf.low, conf.high,
-           p.value, r.squared = contains("r.squared"), 
-           adj.r.squared = contains("adj.r.squared"), nobs)
-  
-  
-  # Create a visualization of the estimates with confidence intervals
-  plot.estimate.out <- final_results %>%
-    left_join(service_table %>% select(response_var = service, title), 
-              by = "response_var") %>%
-    mutate(S = case_when(conf.low > 0 ~ "significantly positive (p < 0.05)", 
-                         conf.high < 0 ~ "significantly negative (p < 0.05)", 
-                         TRUE ~ "not-significant (p > 0.05)")) %>%
-    ggplot(aes(x = estimate, y = term, color = S, fill = S)) +
-    geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
-    geom_point(shape = 21) +
-    geom_vline(xintercept = 0, linetype = "dashed") +
-    facet_wrap(~ title, scales = "free") +
-    scale_color_manual(values = c("significantly positive (p < 0.05)" = "#8C1C13", 
-                                  "significantly negative (p < 0.05)" = "#22577A", 
-                                  "not-significant (p > 0.05)" = "#6C757D")) +
-    scale_fill_manual(values = c("significantly positive (p < 0.05)" = "#BF4342", 
-                                 "significantly negative (p < 0.05)" = "#38A3A5", 
-                                 "not-significant (p > 0.05)" = "#CED4DA")) +
-    labs(x = "Standardized Estimate", y = "") +
-    theme(legend.position = "bottom", 
-          panel.background = element_rect(fill = "white", color = "black"), 
-          panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
-          strip.background = element_blank(), 
-          legend.title = element_blank(), 
-          legend.key = element_blank(), 
-          strip.text = element_text(face = "bold", size = 12), 
-          legend.text = element_text(size = 14), 
-          axis.text = element_text(size = 12))
-  
-  # Save the plot generated
-  ggsave(file.out, plot.estimate.out, width = 30, height = 14, 
+  # - Save the plot
+  ggsave(file.out, plot.out, width = 35, height = 40, 
          units = "cm", dpi = 600, bg = "white")
   
-  # Return the files generated
+  # return the name of the plot exported
   return(c(file.out, files.diagnostic))
   
 }
