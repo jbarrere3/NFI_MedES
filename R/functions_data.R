@@ -1396,7 +1396,11 @@ compile_explanatory_ser = function(FrenchNFI_plot_raw, data_explanatory,
 #' @param data_services service value per plot
 #' @param NFIMed_plot NFI plot-level data
 #' @param service_table table containing the title and distribution of each service
-get_temporal_trend = function(data_services, NFIMed_plot, service_table){
+#' @param dir.out directory where to save the plots with regressions
+get_temporal_trend = function(data_services, NFIMed_plot, service_table, dir.out){
+  
+  # Create output directory if needed
+  create_dir_if_needed(paste0(dir.out, "/test"))
   
   # Prepare the dataset for each model
   data.in = data_services %>%
@@ -1413,6 +1417,9 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table){
   # Loop on all service - ecoregion combination
   for(i in 1:dim(out)[1]){
     
+    # printer
+    print(paste0("regression ", i, "/", dim(out)[1]))
+    
     # Prepare data
     # - subset for the right service and ecoregion
     data.i = data.in %>% 
@@ -1421,8 +1428,8 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table){
       drop_na() 
     # - Get the average service value the first year
     s0.i = (data.i %>%
-      filter(year == min(year, na.rm = TRUE)) %>%
-      summarize(mean = mean(service.value, na.rm = TRUE)))$mean
+              filter(year == min(year, na.rm = TRUE)) %>%
+              summarize(mean = mean(service.value, na.rm = TRUE)))$mean
     # - Calculate change in percentage
     data.i = data.i %>% 
       mutate(service.trend.percent = 100*(service.value - s0.i)/s0.i, 
@@ -1440,6 +1447,26 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table){
     out$estimate_se[i] = stat.i$std.error
     out$pval[i] = stat.i$p.value
     out$n[i] = dim(data.i)[1]
+    
+    # Plot the regression
+    plot.i = data.i %>%
+      group_by(time) %>%
+      summarize(mean = mean(service.trend.percent, na.rm = TRUE), 
+                se = sd(service.trend.percent, na.rm = TRUE)/sqrt(n())) %>%
+      mutate(fit = predict(model.i, newdata = .)) %>%
+      ggplot(aes(x = time, y = mean)) + 
+      geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0) + 
+      geom_point(shape = 21, fill = "lightblue", color = "black") + 
+      geom_line(aes(y = fit), color = "red") + 
+      theme_bw() + 
+      xlab("Time (year)") + ylab(paste0("Change in ", out$service[i], " (%)")) + 
+      ggtitle(paste0("Estimate = ", round(stat.i$estimate, digits = 3), 
+                     ", pvalue = ", round(stat.i$p.value, digits = 3), 
+                     ", n = ", dim(data.i)[1]))
+    
+    # Save the plot
+    ggsave(paste0(dir.out, "/fig_", out$service[i], "_", out$ecoregion[i], ".jpg"), 
+           plot.i, width = 14, height = 11, units = "cm", dpi = 600, bg = "white")
   }
   
   # Return output

@@ -25,7 +25,8 @@ packages.in <- c("dplyr", "ggplot2", "RCurl", "httr", "tidyr", "data.table",
                  "sp", "sf", "stringr", "taxize", "rnaturalearth", "WorldFlora",
                  "rnaturalearthdata", "cowplot", "readxl", "terra", "stats", 
                  "factoextra", "purrr", "broom", "car", "tweedie", "glmnet", 
-                 "patchwork", "statmod", "lubridate")
+                 "patchwork", "statmod", "lubridate", "scales", "patchwork", 
+                 "xtable")
 for(i in 1:length(packages.in)) if(!(packages.in[i] %in% rownames(installed.packages()))) install.packages(packages.in[i])
 # Targets options
 options(tidyverse.quiet = TRUE)
@@ -161,7 +162,7 @@ list(
   tar_target(data_explanatory_ser, compile_explanatory_ser(
     FrenchNFI_plot_raw, data_explanatory, "export/fig/supplementary/figsup_pcastr.jpg")),
   tar_target(temporal_trend, get_temporal_trend(
-    data_services, NFIMed_plot, service_table)),
+    data_services, NFIMed_plot, service_table, "export/fig/supplementary/trends")),
   
   # Fit models
   tar_target(models_plot, fit_models_plot(
@@ -183,9 +184,9 @@ list(
   tar_target(fig_map_trends, map_temporal_trend(
     temporal_trend, service_table, sylvoER_shp_file, 
     "export/fig/fig_map_trends.jpg"), format = "file"),
-  tar_target(fig_analysis2, make_plot_analysis2(
+  tar_target(fig_analysis2, make_plot_analysis_ecoregion(
     temporal_trend, data_explanatory_ser, service_table, 
-    "export/fig/fig_model2.jpg"), format = "file"),
+    "export/fig", "export/fig/supplementary/diag2", "export"), format = "file"),
   # - Supplementary material
   tar_target(figsup_exploratory, plot_exploratory(
     data_explanatory, data_services, service_table, 
