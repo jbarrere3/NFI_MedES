@@ -545,7 +545,7 @@ make_plot_analysis_ecoregion = function(
     
     # Dignostic plot to save
     diag.i = generate_diagnostics(model.i, service_table$service[i], "norm")
-    ggsave(filename = paste0(dir.supp.out, "/diagnostic_", service_table$service[i], ".jpg"),
+    ggsave(filename = paste0(dir.supp.out, "/diagnostic2_", service_table$service[i], ".jpg"),
            plot = diag.i, width = 12, height = 5, dpi = 600 )
     
     # Output of the model
@@ -618,7 +618,7 @@ make_plot_analysis_ecoregion = function(
   
   # return the name of the plot exported
   return(c(file.out, file.table.out, 
-           paste0(dir.supp.out, "/diagnostic_", service_table$service[i], ".jpg")))
+           paste0(dir.supp.out, "/diagnostic2_", service_table$service[i], ".jpg")))
   
   
 }
