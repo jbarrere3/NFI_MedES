@@ -470,63 +470,20 @@ make_plot_analysis_ecoregion = function(
   # Explanatory variables
   var.expl = colnames(data_explanatory_ser)[-1]
   
+  # Table with label for each explanatory variable
+  table.var.expl = data.frame(var.expl = var.expl) %>%
+    left_join(
+      data.frame(var.expl = c("dist.freq", "prop.management", "pca1_str", 
+                              "pca2_str", "pca_clim.mean"), 
+                 title = c("Disturbance\nfrequency", "Proportion of\nmanaged plots", 
+                           "Dominant structure\n(coppice to even-aged)", 
+                           "Dominant structure\n(coppice-with-standards\nto uneven-aged)", 
+                           "Average climate\n(cold-wet to\nhot-dry)")), 
+      by = "var.expl")
+  
   # Formula for model fitting
   formula.in = as.formula(paste("trend ~", paste(
     paste0(var.expl, "_scaled"), collapse = " + ")))
-  
-  # Initialize the lists that will contain each plot
-  plotlist.flux.out = vector(
-    mode = "list", length = length(which(service_table$type == "flux")))
-  plotlist.capacity.out = vector(
-    mode = "list", length = length(which(service_table$type == "capacity")))
-  
-  # Initialize counter for capacity and flux
-  k_flux = 0
-  k_capacity = 0
-  
-  # Internal function to plot trends
-  plot_trends = function(expl, service.in, data.in, model.in, stat.in){
-    
-    # Set other scaled variables to zero
-    data.in[, c(paste0(var.expl[var.expl != expl], "_scaled"))] = 0
-    
-    # Add model predictions
-    data.in$fit = predict(model.in, newdata = data.in)
-    
-    # Rename the variable for the x axis
-    data.in$expl = data.in[, expl]
-    
-    # Make the plot
-    plot.out = data.in %>%
-      ggplot(aes(x = expl, y = trend)) + 
-      geom_point(aes(size = weight, fill = trend), show.legend = FALSE, 
-                 shape = 21, color = "black", alpha = 0.8) + 
-      scale_fill_gradient2(
-        low = '#0FA3B1', mid = 'white', high = '#CB1B16', midpoint = 0) + 
-      geom_hline(yintercept = 0, linetype = "dashed", color = "gray") + 
-      ggtitle(paste0("F=", round(filter(stat.in, term == expl)$Fval, digits = 1), 
-                     ", ", filter(stat.in, term == expl)$pval_char)) +
-      theme(panel.background = element_rect(color = "black", fill = "white"), 
-            panel.grid = element_blank(), 
-            legend.position = "none", 
-            plot.title = element_text(size = 13, hjust = 0.5), 
-            axis.title.y = element_text(size = 13), 
-            axis.title.x = element_text(size = 11))
-    
-    # Add regression line when significant
-    if(filter(stat.in, term == expl)$p.val < 0.05) plot.out = plot.out + 
-      geom_line(aes(y = fit))
-    
-    # Add x and ylab depending on the explanatory variable
-    if(expl == "dist.freq") plot.out = plot.out + 
-      xlab("Disturbance frequency") + 
-      ylab(paste0("Trend in \n", service.in, "(%)"))
-    if(expl == "prop.management") plot.out = plot.out + ylab("") + 
-      xlab("Proportion of managed plot")
-    
-    # Return the plot generated 
-    return(plot.out)
-  }
   
   # Loop on all services
   for(i in 1:dim(service_table)[1]){
@@ -557,31 +514,80 @@ make_plot_analysis_ecoregion = function(
              pval_char = scales::pvalue(pval, add_p = TRUE, accuracy = 0.01)) %>%
       select(service, term, estimate, se = std.error, Fval,
              p.val = pval, conf.low, conf.high, pval_char) %>%
-      mutate(term = gsub("\\_.+", "", term)) 
+      mutate(term = gsub("\\_scaled", "", term)) 
     
-    # Generate plots to show trends in relation to disturbance and management
-    plot.dist.i = plot_trends("dist.freq", service_table$title[i], data.i, model.i, stat.i)
-    plot.manag.i = plot_trends("prop.management", service_table$title[i], data.i, model.i, stat.i)
+    # Initialize data to make predictive plot
+    data.pred.i = data.frame(service = character(0), term = character(0), 
+                             term.value = numeric(0), fit = numeric(0), 
+                             lwr = numeric(0), upr = numeric(0))
     
-    # Assemble plots
-    plot.i = plot.dist.i + plot.manag.i + 
-      plot_layout(nrow = 1, widths = c(0.97, 1)) & 
-      theme(plot.margin = margin(0.1, 0.1, 0.1, 0.1, "cm"))
-    # Add plot i to the right list
-    if(service_table$type[i] == "capacity"){
-      k_capacity = k_capacity + 1
-      plotlist.capacity.out[[k_capacity]] = plot.i
+    # Loop on each explanatory variable
+    for(j in 1:length(var.expl)){
+      
+      # Explanatory variable j
+      var.j = var.expl[j]
+      
+      # Make predictions setting other explanatory variables to their mean
+      newdata.ij = data.i %>%
+        mutate(across(all_of(paste0(var.expl[-j], "_scaled")), ~ 0)) %>%
+        cbind.data.frame(predict(model.i, newdata = ., interval = "confidence", 
+                                 level = 0.95))
+      
+      # Export to the main dataset
+      data.pred.i = data.pred.i %>%
+        rbind(data.frame(service = service_table$service[i], term = var.j, 
+                         term.value = data.i[, var.j], fit = newdata.ij$fit, 
+                         lwr = newdata.ij$lwr, upr = newdata.ij$upr))
     }
-    if(service_table$type[i] == "flux"){
-      k_flux = k_flux + 1
-      plotlist.flux.out[[k_flux]] = plot.i
-    }
     
-    # Compile a statistic table
-    if(i == 1) stat.out = stat.i
-    else stat.out = rbind(stat.out, stat.i)
+    # Compile a statistic table and prediction dataframe
+    if(i == 1){
+      stat.out = stat.i
+      data.pred = data.pred.i
+    } else {
+      stat.out = rbind(stat.out, stat.i)
+      data.pred = rbind(data.pred, data.pred.i)
+    } 
     
   }
+  
+  # Initialize plotlist
+  plotlist.out = vector(mode = "list", length = length(var.expl))
+  
+  # Color vector
+  vec.col = c("#014F86", "#3D405B", "#81B29A", "#F2CC8F", "#FF99C8", "#3C6E71", 
+              "#FAA307", "#8C1C13", "#E07A5F")[c(1:dim(service_table)[1])]
+  names(vec.col) = service_table$title
+  
+  # Make the plot
+  plot.out = data.pred %>%
+    left_join(stat.out %>% 
+                mutate(Significance = ifelse(
+                  p.val < 0.05, "p < 0.05", "p >= 0.05")) %>%
+                select(service, term, Significance), by = c("term", "service")) %>%
+    left_join(service_table %>% select(service, Service = title), 
+              by = "service") %>%
+    left_join(table.var.expl %>% rename(term = var.expl), by = "term") %>%
+    ggplot(aes(x = term.value, color = Service, fill = Service)) + 
+    geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.15, color = NA) + 
+    geom_line(aes(y = fit, linetype = Significance)) + 
+    scale_linetype_manual(values = c(`p < 0.05` = "solid", `p >= 0.05` = "dashed")) + 
+    ylab("Ecosystem service\ntrend (%/year)") +
+    facet_wrap(~ title, scales = "free") + 
+    xlab("Ecoregion-level explanatory variable") + 
+    geom_hline(yintercept = 0, linetype = "solid", color = "#403D39") +
+    scale_color_manual(values = vec.col) +
+    scale_fill_manual(values = vec.col) +
+    theme(panel.background = element_rect(color = 'black', fill = 'white'), 
+          panel.grid = element_blank(),
+          strip.background = element_blank(), 
+          legend.position = "top", 
+          legend.title = element_blank(), 
+          legend.key = element_blank(), 
+          strip.text = element_text(size = 12), 
+          axis.title = element_text(size = 12))
+  
+  
   
   # Format statistical table for supplementary material
   # - File of the latex table
@@ -604,16 +610,10 @@ make_plot_analysis_ecoregion = function(
         hline.after = seq(from = 0, to = dim(stat.out)[1], by = length(var.expl)), 
         caption.placement = "top", file = file.table.out)
   
-  # Assemble plots
-  plot.out = plot_grid(
-    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 3), 
-    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 3),
-    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
-    scale = 0.9, align = "hv", label_size = 22)
   
   # - Save the plot
   file.out = paste0(dir.main.out, "/fig_model2.jpg")
-  ggsave(file.out, plot.out, width = 48, height = 27, 
+  ggsave(file.out, plot.out, width = 23, height = 15, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
