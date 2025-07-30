@@ -600,7 +600,7 @@ make_plot_analysis_ecoregion = function(
   print(xtable(table.out, type = "latex", label = "analysis2_stat_table",
                caption = "Statistical outputs of the models testing the effect of 
                ecoregion-level factors on ecosystem services temporal trends"), 
-        include.rownames=FALSE, include.colnames = TRUE, 
+        include.rownames=FALSE, include.colnames = TRUE, size = "\\scriptsize",
         hline.after = seq(from = 0, to = dim(stat.out)[1], by = length(var.expl)), 
         caption.placement = "top", file = file.table.out)
   
