@@ -107,14 +107,8 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
     gather(key = "service", value = "value", service_table$service)
   
   # Initialize the lists that will contain each plot
-  plotlist.flux.out = vector(
-    mode = "list", length = length(which(service_table$type == "flux")))
-  plotlist.capacity.out = vector(
-    mode = "list", length = length(which(service_table$type == "capacity")))
-  
-  # Initialize counter for capacity and flux
-  k_flux = 0
-  k_capacity = 0
+  plotlist.out = vector(
+    mode = "list", length = dim(service_table)[1])
   
   # Loop on all services
   for(i in 1:dim(service_table)[1]){
@@ -135,26 +129,15 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
             axis.text = element_text(size = 13)) + 
       ggtitle(service_table$title[i])
     
-    # Add plot i to the right list
-    if(service_table$type[i] == "capacity"){
-      k_capacity = k_capacity + 1
-      plotlist.capacity.out[[k_capacity]] = plot.i
-    }
-    if(service_table$type[i] == "flux"){
-      k_flux = k_flux + 1
-      plotlist.flux.out[[k_flux]] = plot.i
-    }
+    # Add plot i to the list
+    plotlist.out[[i]] = plot.i
   }
   
   # Assemble plots
-  plot.out = plot_grid(
-    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 3), 
-    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 3),
-    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
-    scale = 0.9, align = "hv", label_size = 22)
+  plot.out = plot_grid(plotlist = plotlist.out, align = "hv", nrow = 2)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 35, height = 35, 
+  ggsave(file.out, plot.out, width = 38, height = 20, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
@@ -185,13 +168,9 @@ make_plots_analysis1 = function(models_plot, service_table,
   explanatory_vars = terms[-unique(c(grep("2", terms), c(grep(":", terms))))]
   
   # Initialize the lists that will contain each estimate plot
-  data.flux = data.frame(service = character(0), var = character(0), 
+  data.out = data.frame(service = character(0), var = character(0), 
                          estimate = numeric(0), lwr = numeric(0), upr = numeric(0))
-  data.capacity = data.flux
   
-  # Initialize counter for capacity and flux
-  k_flux = 0
-  k_capacity = 0
   
   # Loop on all services
   for(i in 1:dim(service_table)[1]){
@@ -204,15 +183,8 @@ make_plots_analysis1 = function(models_plot, service_table,
                         upr = models_plot$interval[[i]][, 2]) %>%
       filter(var != "(Intercept)")
     
-    # Add plot i to the right list
-    if(service_table$type[i] == "capacity"){
-      k_capacity = k_capacity + 1
-      data.capacity = rbind(data.capacity, data.i)
-    }
-    if(service_table$type[i] == "flux"){
-      k_flux = k_flux + 1
-      data.flux = rbind(data.flux, data.i)
-    }
+    # Add plot i to the output dataframe
+    data.out = rbind(data.out, data.i)
     
     # Save diagnostic plot
     ggsave(filename = files.diagnostic[i], plot = models_plot$diag[[i]],
@@ -229,7 +201,7 @@ make_plots_analysis1 = function(models_plot, service_table,
   var.control = setdiff(terms, c(var.div, var.div.int))
   
   # Plot for fluxes
-  plot.flux = data.flux %>%
+  plot.out = data.out %>%
     left_join(service_table %>% select(service, title), by = "service") %>%
     mutate(var.type = case_when(
       var %in% var.div ~ "Diversity\nvariables", 
@@ -258,57 +230,17 @@ make_plots_analysis1 = function(models_plot, service_table,
           panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
           strip.background.x = element_blank(), 
           strip.background.y = element_rect(color = "black", fill = "#FEFAE0"), 
-          strip.text.x = element_text(size = 15),
+          strip.text.x = element_text(size = 12, face = "bold"),
           strip.text.y = element_text(size = 13, angle = 360),
           axis.text = element_text(size = 12), 
           legend.title = element_blank(), 
           legend.key = element_blank(), 
-          legend.text = element_text(size = 14))
+          legend.text = element_text(size = 14), 
+          legend.position = "bottom")
   
-  # Plot for fluxes
-  plot.capacity = data.capacity %>%
-    left_join(service_table %>% select(service, title), by = "service") %>%
-    mutate(var.type = case_when(
-      var %in% var.div ~ "Diversity\nvariables", 
-      var %in% var.div.int ~ "Interactions or\nquadratic terms\ninvolving diversity", 
-      var %in% var.control ~ "Control\nvariables"))  %>%
-    mutate(S = case_when(lwr > 0 ~ "significantly positive\n(p < 0.05)", 
-                         upr < 0 ~ "significantly negative\n(p < 0.05)", 
-                         TRUE ~ "not-significant\n(p > 0.05)"), 
-           var.type = factor(var.type, levels = c(
-             "Diversity\nvariables",
-             "Interactions or\nquadratic terms\ninvolving diversity", 
-             "Control\nvariables"))) %>%
-    ggplot(aes(x = estimate, y = var, color = S, fill = S)) +
-    geom_errorbarh(aes(xmin = lwr, xmax = upr), height = 0.2) +
-    geom_point(shape = 21) +
-    geom_vline(xintercept = 0, linetype = "dashed") +
-    scale_color_manual(values = c("significantly positive\n(p < 0.05)" = "#8C1C13", 
-                                  "significantly negative\n(p < 0.05)" = "#22577A", 
-                                  "not-significant\n(p > 0.05)" = "#6C757D")) +
-    scale_fill_manual(values = c("significantly positive\n(p < 0.05)" = "#BF4342", 
-                                 "significantly negative\n(p < 0.05)" = "#38A3A5", 
-                                 "not-significant\n(p > 0.05)" = "#CED4DA")) +
-    labs(x = "Standardized Estimate", y = "") +
-    facet_grid(var.type ~ title, scales = "free", space = "free_y")   +
-    theme(legend.position = "none", 
-          panel.background = element_rect(fill = "white", color = "black"), 
-          panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
-          strip.background.x = element_blank(), 
-          strip.background.y = element_rect(color = "black", fill = "#FEFAE0"), 
-          strip.text.x = element_text(size = 15),
-          strip.text.y = element_text(size = 13, angle = 360),
-          axis.text = element_text(size = 12)) 
-  
-  # Assemble plots
-  plot.out = plot_grid(
-    plot.capacity, 
-    plot_grid(plot.flux, (ggplot() + theme_void()), rel_widths = c(1, 0.13), nrow = 1),
-    nrow = 2, labels = c("(a) ES capacity", "(b) ES flux"), 
-    scale = 0.9, align = "hv", label_size = 22)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 40, height = 35, 
+  ggsave(file.out, plot.out, width = 45, height = 18, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
@@ -332,15 +264,9 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
     select(ecoregion = codeser)
   
   
-  # Initialize the lists that will contain each plot
-  plotlist.flux.out = vector(
-    mode = "list", length = length(which(service_table$type == "flux")))
-  plotlist.capacity.out = vector(
-    mode = "list", length = length(which(service_table$type == "capacity")))
-  
-  # Initialize counter for capacity and flux
-  k_flux = 0
-  k_capacity = 0
+  # Initialize the list that will contain each plot
+  plotlist.out = vector(
+    mode = "list", length = dim(service_table)[1])
   
   # Boundaries for the scale of trends
   bound.max = round(max(abs(subset(temporal_trend, pval < 0.05 & n >= 50)$estimate)), 
@@ -423,26 +349,15 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
       ggtitle(paste0("Trend in \n", gsub("\\(.+\\)", "", service_table$title[i]),
                      " (%/yr)"))
     
-    # Add plot i to the right list
-    if(service_table$type[i] == "capacity"){
-      k_capacity = k_capacity + 1
-      plotlist.capacity.out[[k_capacity]] = plot.i
-    }
-    if(service_table$type[i] == "flux"){
-      k_flux = k_flux + 1
-      plotlist.flux.out[[k_flux]] = plot.i
-    }
+    # Add plot i to the list
+    plotlist.out[[i]] = plot.i
   }
   
   # Assemble plots
-  plot.out = plot_grid(
-    plot_grid(plotlist = plotlist.capacity.out, align = "hv", nrow = 3), 
-    plot_grid(plotlist = plotlist.flux.out, align = "hv", nrow = 3),
-    nrow = 1, rel_widths = c(1, 0.5), labels = c("(a) ES capacity", "(b) ES flux"), 
-    scale = 0.9, align = "hv", label_size = 22)
+  plot.out = plot_grid(plotlist = plotlist.out, align = "hv", nrow = 2)
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 31, height = 42, 
+  ggsave(file.out, plot.out, width = 40, height = 27, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
