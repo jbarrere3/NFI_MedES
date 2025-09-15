@@ -123,11 +123,11 @@ fit_models_plot = function(data_explanatory, data_services, service_table){
   for(i in 1:length(explanatory_vars)) eval(parse(text = paste0(
     "data_explanatory$", explanatory_vars[i], "2 = data_explanatory$", 
     explanatory_vars[i], "^2")))
-  # explanatory_vars = c(explanatory_vars, paste0(explanatory_vars, "2"))
+  explanatory_vars2 = c(explanatory_vars, paste0(explanatory_vars, "2"))
   
   # First, join the two datasets
   combined_data <- inner_join(data_explanatory, data_services, by = "IDP") %>%
-    mutate(across(all_of(explanatory_vars), ~ as.numeric(scale(., center = TRUE, scale = TRUE))))
+    mutate(across(all_of(explanatory_vars2), ~ as.numeric(scale(., center = TRUE, scale = TRUE))))
   
   
   # Format response distributions dataset

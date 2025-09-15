@@ -150,8 +150,9 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
 #' @param models_plot List with the models fitted at plot level
 #' @param data_services data containing all services per plot
 #' @param dir.diagnostic directory where to store diagnostic plots
+#' @param data_explanatory Explanatory variables at plot-level formatted
 #' @param file.out name of the file for the main figure
-make_plots_analysis1 = function(models_plot, service_table, 
+make_plots_analysis1 = function(models_plot, service_table, data_explanatory,
                                 dir.diagnostic, file.out){
   
   # Create if needed directory for diagnostic plots and main plot
@@ -168,29 +169,152 @@ make_plots_analysis1 = function(models_plot, service_table,
   explanatory_vars = terms[-unique(c(grep("2", terms), c(grep(":", terms))))]
   
   # Initialize the lists that will contain each estimate plot
-  data.out = data.frame(service = character(0), var = character(0), 
-                         estimate = numeric(0), lwr = numeric(0), upr = numeric(0))
+  data.stat.out = data.frame(service = character(0), var = character(0), 
+                             estimate = numeric(0), lwr = numeric(0), upr = numeric(0))
   
+  # Add square to the explanatory variables
+  data_explanatory = data_explanatory %>% filter(ba.tot < 110)
+  for(i in 1:length(explanatory_vars)) eval(parse(text = paste0(
+    "data_explanatory$", explanatory_vars[i], "2 = data_explanatory$", 
+    explanatory_vars[i], "^2")))
+  
+  # Average for each service
+  means = data_explanatory %>%
+    select(all_of(c(explanatory_vars, paste0(explanatory_vars, "2")))) %>%
+    gather(key = "var", value = "value", all_of(c(explanatory_vars, paste0(explanatory_vars, "2")))) %>%
+    group_by(var) %>%
+    summarize(mean = mean(value, na.rm = TRUE),
+              sd = sd(value, na.rm = TRUE)) %>% ungroup()
+  unscale_raw = function(x, var, means){
+    (data.frame(x = x, var = var) %>%
+       left_join(means, by = "var") %>%
+       mutate(y = x*sd + mean))$y
+  }
+  scale_raw = function(x, var, means){
+    (data.frame(x = x, var = var) %>%
+       left_join(means, by = "var") %>%
+       mutate(y = (x - mean)/sd))$y
+  }
+  scale_squared = function(x, var, means){
+    (data.frame(x = x, var = paste0(var, "2")) %>%
+       left_join(means, by = "var") %>%
+       mutate(y = (x - mean)/sd))$y
+  }
+  
+  # Vector of explanatory variables not related to diversity
+  expl_notdiv = setdiff(c(explanatory_vars, paste0(
+    explanatory_vars, "2")), c("str.div", "shannon", "str.div2", "shannon2"))
+  # Prepare data for predictions
+  data_pred = expand.grid(
+    shannon = seq(from = quantile(data_explanatory$shannon, 0.10), 
+                  to = quantile(data_explanatory$shannon, 0.90), length.out = 100), 
+    str.div = quantile(data_explanatory$str.div, c(0.25, 0.5, 0.75), na.rm = TRUE)) %>%
+    mutate(shannon2 = shannon^2, str.div2 = str.div^2, 
+           shannon = scale_raw(shannon, "shannon", means), 
+           str.div = scale_raw(str.div, "str.div", means), 
+           shannon2 = scale_raw(shannon2, "shannon2", means), 
+           str.div2 = scale_raw(str.div2, "str.div2", means)) %>%
+    cbind(as.data.frame(matrix(
+      data = 0, nrow = dim(.)[1], ncol = length(expl_notdiv), 
+      dimnames = list(rownames = NULL, colnames = expl_notdiv))))
   
   # Loop on all services
   for(i in 1:dim(service_table)[1]){
     
     # Make the estimate plot
-    data.i = data.frame(service = service_table$service[i], 
-                        var = names(coefficients(models_plot$models[[i]])), 
-                        estimate = as.numeric(coefficients(models_plot$models[[i]])), 
-                        lwr = models_plot$interval[[i]][, 1], 
-                        upr = models_plot$interval[[i]][, 2]) %>%
+    data.stat.i = data.frame(service = service_table$service[i], 
+                             var = names(coefficients(models_plot$models[[i]])), 
+                             estimate = as.numeric(coefficients(models_plot$models[[i]])), 
+                             lwr = models_plot$interval[[i]][, 1], 
+                             upr = models_plot$interval[[i]][, 2]) %>%
       filter(var != "(Intercept)")
     
     # Add plot i to the output dataframe
-    data.out = rbind(data.out, data.i)
+    data.stat.out = rbind(data.stat.out, data.stat.i)
+    
+    # Initialize prediction data for service i
+    data.i = data_pred
+    eval(parse(text = paste0("data.i$", service_table$service[i], " = 0")))
+    # Get predictions
+    if(service_table$distrib[i] == "norm"){form.i = as.formula(paste(service_table$service[i], "~", paste(
+      setdiff(names(coefficients(models_plot$models[[i]])), "(Intercept)"), collapse = " + ")))
+    }else{form.i = models_plot$models[[i]]$formula}
+    # -- Generate matrix
+    X <- model.matrix(form.i, data.i)
+    # -- Extract fixed effects
+    beta = coefficients(models_plot$models[[i]])
+    # -- Extract variance covariance matrix
+    vc = vcov(models_plot$models[[i]])
+    # -- Prediction
+    pred <- X %*% beta
+    # -- Standard error of prediction
+    pred.se <- sqrt(diag(X %*% vc %*% t(X)))
+    # -- Criteria to calculate confidence interval
+    crit <- -qnorm(0.05/2)
+    # -- Calculate confidence interval
+    if(service_table$distrib[i] == "beta"){
+      data.i$fit = plogis(pred)
+      data.i$lwr = plogis(pred-crit*pred.se)
+      data.i$upr = plogis(pred+crit*pred.se)
+    }
+    if(service_table$distrib[i] == "norm"){
+      data.i$fit = pred
+      data.i$lwr = pred-crit*pred.se
+      data.i$upr = pred+crit*pred.se
+    }
+    if(!(service_table$distrib[i] %in% c("beta", "norm"))){
+      data.i$fit = exp(pred)
+      data.i$lwr = exp(pred-crit*pred.se)
+      data.i$upr = exp(pred+crit*pred.se)
+    }
+    # -- Finish formatting data for plotting
+    data.i = data.i %>% 
+      mutate(`Tree species diversity (Shannon)` = unscale_raw(shannon, "shannon", means), 
+             `Structural diversity` = case_when(
+               str.div == min(.$str.div) ~ "low (25% quantile)", 
+               str.div == max(.$str.div) ~ "high (75% quantile)", 
+               TRUE ~ "average (50% quantile)"), 
+             `title` = service_table$title[i]) %>%
+      select(all_of(c("title", "Tree species diversity (Shannon)", "Structural diversity", 
+                      "fit", "lwr", "upr")))
+    
+    # Add to the output dataframe
+    if(i == 1) data.out = data.i
+    else data.out = rbind(data.out, data.i)
     
     # Save diagnostic plot
     ggsave(filename = files.diagnostic[i], plot = models_plot$diag[[i]],
            width = 12, height = 5, dpi = 600 )
     
   }
+  
+  # Plot predictions
+  plot.predictions = data.out %>%
+    mutate(`Structural diversity` = factor(`Structural diversity`, levels = c(
+      "low (25% quantile)", "average (50% quantile)", "high (75% quantile)"))) %>%
+    ggplot(aes(x = `Tree species diversity (Shannon)`, 
+               colour = `Structural diversity`, 
+               fill = `Structural diversity`)) + 
+    geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2, colour = NA) + 
+    geom_line(aes(y = fit)) + 
+    facet_wrap(~title, scales = "free_y", nrow = 2) + 
+    ylab("Service value") +
+    scale_fill_manual(values = c(`low (25% quantile)` = "#0A9396", 
+                                 `average (50% quantile)` = "#005F73", 
+                                 `high (75% quantile)` = "#001219")) + 
+    scale_color_manual(values = c(`low (25% quantile)` = "#0A9396", 
+                                  `average (50% quantile)` = "#005F73", 
+                                  `high (75% quantile)` = "#001219")) + 
+    theme(panel.background = element_rect(fill = "white", color = "black"), 
+          panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
+          strip.background = element_blank(), 
+          strip.text = element_text(size = 12, face = "bold"),
+          axis.text = element_text(size = 12), 
+          axis.title = element_text(size = 14), 
+          legend.key = element_blank(), 
+          legend.text = element_text(size = 13), 
+          legend.title = element_text(size = 13), 
+          legend.position = c(0.9, 0.2))
   
   # Classify explanatory vars
   # - Diversity variables raw
@@ -201,7 +325,7 @@ make_plots_analysis1 = function(models_plot, service_table,
   var.control = setdiff(terms, c(var.div, var.div.int))
   
   # Plot for fluxes
-  plot.out = data.out %>%
+  plot.stat = data.stat.out %>%
     left_join(service_table %>% select(service, title), by = "service") %>%
     mutate(var.type = case_when(
       var %in% var.div ~ "Diversity\nvariables", 
@@ -238,9 +362,14 @@ make_plots_analysis1 = function(models_plot, service_table,
           legend.text = element_text(size = 14), 
           legend.position = "bottom")
   
+  # Assemble the two plots
+  plot.out = plot_grid(
+    plot_grid((ggplot() + theme_void()), plot.predictions, nrow = 1, rel_widths = c(0.01, 1)),
+    plot.stat, nrow = 2, align = "v", scale = c(0.9, 1), labels = c("(a)", "(b)"), 
+    rel_heights = c(0.9, 1)) 
   
   # - Save the plot
-  ggsave(file.out, plot.out, width = 45, height = 18, 
+  ggsave(file.out, plot.out, width = 40, height = 33, 
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported

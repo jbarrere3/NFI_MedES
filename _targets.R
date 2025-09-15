@@ -179,7 +179,7 @@ list(
     NFIMed_plot, data_services, service_table, sylvoER_shp_file, 
     "export/fig/fig_spatial.jpg"), format = "file"), 
   tar_target(fig_analysis1, make_plots_analysis1(
-    models_plot, service_table, "export/fig/supplementary/diag1",
+    models_plot, service_table, data_explanatory, "export/fig/supplementary/diag1",
     "export/fig/fig_model1.jpg"), format = "file"),
   tar_target(fig_map_trends, map_temporal_trend(
     temporal_trend, service_table, sylvoER_shp_file, 
