@@ -190,6 +190,9 @@ list(
   # - Supplementary material
   tar_target(figsup_exploratory, plot_exploratory(
     data_explanatory, data_services, service_table, 
-    "export/fig/supplementary/figsup_exploratory.jpg"), format = "file")
+    "export/fig/supplementary/figsup_exploratory.jpg"), format = "file"), 
+  tar_target(table_coef_emerge, export_emerge(
+    coef_volume_file, tree.species_info, FrenchNFI_species, 
+    "export/table_coef_emerge.tex"), format = "file")
   
 )

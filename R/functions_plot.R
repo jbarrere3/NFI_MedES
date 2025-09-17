@@ -329,14 +329,14 @@ make_plots_analysis1 = function(models_plot, service_table, data_explanatory,
     left_join(service_table %>% select(service, title), by = "service") %>%
     mutate(var.type = case_when(
       var %in% var.div ~ "Diversity\nvariables", 
-      var %in% var.div.int ~ "Interactions or\nquadratic terms\ninvolving diversity", 
+      var %in% var.div.int ~ "Interactions\ninvolving diversity", 
       var %in% var.control ~ "Control\nvariables"))  %>%
     mutate(S = case_when(lwr > 0 ~ "significantly positive\n(p < 0.05)", 
                          upr < 0 ~ "significantly negative\n(p < 0.05)", 
                          TRUE ~ "not-significant\n(p > 0.05)"), 
            var.type = factor(var.type, levels = c(
              "Diversity\nvariables",
-             "Interactions or\nquadratic terms\ninvolving diversity", 
+             "Interactions\ninvolving diversity", 
              "Control\nvariables"))) %>%
     ggplot(aes(x = estimate, y = var, color = S, fill = S)) +
     geom_errorbarh(aes(xmin = lwr, xmax = upr), height = 0.2) +
@@ -652,7 +652,7 @@ make_plot_analysis_ecoregion = function(
                ecoregion-level factors on ecosystem services temporal trends"), 
         include.rownames=FALSE, include.colnames = TRUE, size = "\\scriptsize",
         hline.after = seq(from = 0, to = dim(stat.out)[1], by = length(var.expl)), 
-        caption.placement = "top", file = file.table.out)
+        caption.placement = "top", file = file.table.out, floating = TRUE, placement = "!h")
   
   
   # - Save the plot

@@ -1473,3 +1473,65 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table, dir.out
   return((out %>% select(-distrib)))
   
 }
+
+
+
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+#### -- Make exports for supporting information ------------------
+#%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+#' Export the coefficients from Deleuze et al 2014 as a Latex table
+#' @param coef_volume_file raw data from Deleuze et al 2014
+#' @param tree.species_info taxonomic information at tree species level
+#' @param FrenchNFI_species Tree species code to species name in French NFI
+#' @param file.out Name of the file to save, including path
+export_emerge = function(coef_volume_file, tree.species_info, FrenchNFI_species, 
+                         file.out){
+  
+  # - Create output directory if needed
+  create_dir_if_needed(file.out)
+  
+  # - Read file of coef volume 
+  coef_volume_raw = fread(coef_volume_file) %>%
+    mutate(speciesCode = ifelse(speciesCode %in% paste0("0", c(1:9)), 
+                                gsub("0", "", speciesCode), speciesCode))
+  
+  # - Format species data to add volume coefficients
+  table.out = tree.species_info %>%
+    # Add species code 
+    left_join((FrenchNFI_species %>%
+                 select(`species.original` = `lib_cdref`, 
+                        `speciesCode` = `// espar`)), 
+              by = "species.original") %>%
+    # Attribute the code for conifer and deciduous without coefficients
+    mutate(speciesCode = case_when(
+      speciesCode %in% coef_volume_raw$speciesCode ~ speciesCode, 
+      !(speciesCode %in% coef_volume_raw$speciesCode) & group == "gymnosperms" ~ "otherConiferous", 
+      !(speciesCode %in% coef_volume_raw$speciesCode) & group == "angiosperms" ~ "otherDeciduous", 
+      speciesCode == "36" ~ "otherDeciduous", # Eucalyptus
+      TRUE ~ NA)) %>%
+    # Join coefficients 
+    left_join(coef_volume_raw, by = "speciesCode") %>%
+    # Add the final species column 
+    mutate(species_final = ifelse(
+      speciesCode %in% c("otherConiferous", "otherDeciduous"), speciesCode, species)) %>%
+    # Format the coefficients to include in the table
+    mutate(a = as.character(round(aEmerge, digits = 4)), 
+           b = as.character(round(bEmerge, digits = 4)), 
+           c = as.character(round(cEmerge, digits = 4))) %>%
+    # Only keep columns of interest
+    select(species = species_final, a, b, c) %>%
+    distinct() %>% drop_na()
+  
+  # - Make latex table
+  print(xtable(table.out, type = "latex", label = "tableEmergeCoef",
+               caption = "Species-specific coefficients of tree volume from Deleuze et al. (2014)."), 
+        include.rownames=FALSE, include.colnames = TRUE, size = "\\scriptsize",
+        hline.after = c(0, dim(table.out)[1]), 
+        caption.placement = "top", file = file.out)
+  
+  # - Return file saved
+  return(file.out)
+  
+}
