@@ -1535,3 +1535,68 @@ export_emerge = function(coef_volume_file, tree.species_info, FrenchNFI_species,
   return(file.out)
   
 }
+
+
+#' Function to export a table with the shade casting ability of the most abundant species
+#' @param tree.species_info dataframe with tree-species level information
+#' @param file.sca.genus Shade casting ability (SCA) per genus from Kaber et al.
+#' @param file.sca.species Shade casting ability (SCA) per species from Kaber et al.
+#' @param NFIMed_tree Tree-level data formatted
+#' @param file.out Name of the file to save, including path
+export_sca = function(tree.species_info, file.sca.genus, file.sca.species, 
+                      NFIMed_tree, file.out){
+  
+  # Create output directory if needed
+  create_dir_if_needed(file.out)
+  
+  # Rank species per abundance
+  species.abundance = NFIMed_tree %>%
+    mutate(ba.ha = ba*weight) %>%
+    group_by(species) %>%
+    summarize(abundance = sum(ba.ha, na.rm = TRUE)) %>%
+    ungroup() %>% 
+    arrange(desc(abundance)) %>%
+    rename(species.original = species)
+  
+  # Read shade casting ability (SCA) at species and genus level from Kaber et al. 2021
+  sca.genus = fread(file.sca.genus)
+  sca.species = fread(file.sca.species)
+  
+  # Add SCA in the tree species information
+  data_species = tree.species_info %>%
+    left_join(sca.species %>% rename(species = Species, sca_species = SCA), by = "species") %>%
+    left_join(sca.genus %>% rename(genus = Genus, sca_genus = SCA), by = "genus") %>%
+    # Calculate at family level
+    group_by(family) %>% 
+    mutate(sca_family = mean(sca_species, na.rm = TRUE)) %>%
+    ungroup() %>%
+    # Calculate at group level
+    group_by(group) %>%
+    mutate(sca_group = mean(sca_species, na.rm = TRUE)) %>% 
+    ungroup() %>%
+    # Calculate final SCA
+    mutate(sca = case_when(
+      !is.na(sca_species) ~ sca_species, 
+      is.na(sca_species) & !is.na(sca_genus) ~ sca_genus, 
+      is.na(sca_species) & is.na(sca_genus) & !is.na(sca_family) ~ sca_family, 
+      TRUE ~ sca_group)) %>%
+    # Add abundance
+    left_join(species.abundance, by = "species.original") %>%
+    # Select columns of interest and filter speces with poor abundance 
+    filter(abundance > 10000) %>%
+    select(species, genus, group, sca)
+  
+  # - Make latex table
+  print(xtable(data_species, type = "latex", label = "tableSCA",
+               caption = paste0("Shade casting ability (SCA) extracted from Kaber et al.", 
+                                "for the 30 most abundant tree species in the French NFI.", 
+                                "When SCA values were unavailable for a given species, we", 
+                                " used the average SCA value of the nearest ", 
+                                "available taxonomic level (genus, family, or group)")), 
+        include.rownames=FALSE, include.colnames = TRUE, size = "\\scriptsize",
+        hline.after = c(0, dim(data_species)[1]), 
+        caption.placement = "top", file = file.out)
+  
+  # - Return file saved
+  return(file.out)
+}

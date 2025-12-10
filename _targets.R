@@ -187,12 +187,16 @@ list(
   tar_target(fig_analysis2, make_plot_analysis_ecoregion(
     temporal_trend, data_explanatory_ser, service_table, 
     "export/fig", "export/fig/supplementary/diag2", "export"), format = "file"),
-  # - Supplementary material
+  
+  # Exports for supplementary material
   tar_target(figsup_exploratory, plot_exploratory(
     data_explanatory, data_services, service_table, 
     "export/fig/supplementary/figsup_exploratory.jpg"), format = "file"), 
   tar_target(table_coef_emerge, export_emerge(
     coef_volume_file, tree.species_info, FrenchNFI_species, 
-    "export/table_coef_emerge.tex"), format = "file")
+    "export/table_coef_emerge.tex"), format = "file"), 
+  tar_target(table_sca, export_sca(
+    tree.species_info, file.sca.genus, file.sca.species, NFIMed_tree, 
+    "export/table_sca.tex"), format = "file")
   
 )
