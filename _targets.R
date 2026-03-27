@@ -197,6 +197,9 @@ list(
     "export/table_coef_emerge.tex"), format = "file"), 
   tar_target(table_sca, export_sca(
     tree.species_info, file.sca.genus, file.sca.species, NFIMed_tree, 
-    "export/table_sca.tex"), format = "file")
+    "export/table_sca.tex"), format = "file"), 
+  tar_target(fig_pca_services, plot_pca_services(
+    NFIMed_plot, data_services, service_table, sylvoER_shp_file, 
+    "export/fig/supplementary/fig_service_pca.jpg"), format = "file")
   
 )

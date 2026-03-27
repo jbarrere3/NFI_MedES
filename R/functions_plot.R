@@ -897,4 +897,117 @@ map_explanatory_ser = function(data_explanatory_ser, sylvoER_shp_file, file.out)
   
 }
 
+#' Function to plot the correlation between ecosystem services
+#' @param NFIMed_plot Plot level NFI data
+#' @param data_services plot level ecosystem services 
+#' @param service_table table listing services name and title
+#' @param file.out Name of the file to save, including path
+plot_pca_services = function(NFIMed_plot, data_services, service_table, 
+                             sylvoER_shp_file, file.out){
+  
+  
+  # Create output directory if needed
+  create_dir_if_needed(file.out)
+  
+  # Run pca with ecosystem services
+  # - Subset the dataset to be compatible with pca
+  data.pca.in = data_services %>% drop_na()
+  # - Run pca
+  pca = prcomp(data.pca.in %>% dplyr::select(-IDP), center = T, scale = T)
+  # - Extract outputfor individual observations
+  data.pca.out = data.pca.in %>%
+    mutate(PC1 = get_pca_ind(pca)[[1]][, 1], 
+           PC2 = get_pca_ind(pca)[[1]][, 2]) %>%
+    select(IDP, PC1, PC2)
+  # - Extract output for variables
+  var_data <- as.data.frame(pca$rotation[, 1:2]) %>%
+    mutate(service = rownames(.)) %>%
+    left_join(service_table[, c("service", "title")], by = "service") %>%
+    drop_na()
+  var_percent <- pca$sdev^2 / sum(pca$sdev^2) * 100
+  
+  # Color vector
+  vec.col = c("#014F86", "#3D405B", "#81B29A", "#F2CC8F", "#FF99C8", "#3C6E71", 
+              "#FAA307", "#8C1C13", "#E07A5F")[c(1:dim(service_table)[1])]
+  names(vec.col) = service_table$title
+  
+  # Plot the PCA
+  plot.pca = ggplot() +
+    # Individual points
+    geom_point(data = data.pca.out, aes(x = PC1, y = PC2), color = "#0077B6", 
+               fill = "#90E0EF", shape = 21, alpha = 0.3) +
+    # Variable arrows
+    geom_segment(data = var_data, arrow = arrow(length = unit(0.2, "cm")), linewidth = 1,
+                 aes(x = 0, y = 0, xend = PC1*7, yend = PC2*7, color = title)) +
+    scale_color_manual(values = vec.col) +
+    # Axis labels with variance percentages
+    labs(x = paste0("PCA1 (", round(var_percent[1], 1), "%)"),
+         y = paste0("PCA2 (", round(var_percent[2], 1), "%)")) +
+    theme(legend.position = "top", 
+          legend.title = element_blank(), 
+          legend.key = element_blank(), 
+          panel.background = element_rect(color = 'black', fill = 'white'), 
+          panel.grid = element_blank(), 
+          axis.title = element_text(size = 18), 
+          legend.text = element_text(size = 12)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+    xlim(-5, 5) + ylim(-5, 5)
+  
+  # Average pca across sylvoecoregions
+  data_ser = NFIMed_plot %>%
+    select(IDP, ecoregion) %>%
+    left_join(data.pca.out, by = "IDP") %>%
+    drop_na() %>%
+    group_by(ecoregion) %>%
+    summarize(PC1 = mean(PC1, na.rm = TRUE), 
+              PC2 = mean(PC2, na.rm = TRUE)) %>%
+    ungroup()
+  
+  # Build dataset for plotting
+  sylvoER = read_sf(sylvoER_shp_file, crs = 2154) %>%
+    st_transform(crs = 4326) %>%
+    select(ecoregion = codeser) %>%
+    left_join(data_ser, by = "ecoregion") %>%
+    gather(key = "axis", value = "value", all_of(c("PC1", "PC2")))
+  
+  # Initialize the lists that will contain each plot
+  plotlist.out = vector(mode = "list", length = 2)
+  
+  # Loop on all services
+  for(i in 1:2){
+    plot.i = ne_countries(scale = "medium", returnclass = "sf") %>%
+      ggplot(aes(geometry = geometry)) +
+      geom_sf(fill = "#778DA9", show.legend = F, size = 0.2) + 
+      geom_sf(data = subset(sylvoER, axis == c("PC1", "PC2")[i]), 
+              aes(fill = value)) +
+      scale_fill_gradient(low = "#CCFF33", high = "#007200") +
+      coord_sf(xlim = c(-5, 10), ylim = c(41.2, 51.5)) +
+      theme(panel.background = element_rect(color = 'black', fill = 'white'), 
+            panel.grid = element_blank(), 
+            legend.title = element_blank(), 
+            legend.key = element_blank(), 
+            legend.position = c(0.9, 0.5),
+            legend.background = element_rect(color = '#778DA9', fill = 'white'),
+            plot.title = element_text(hjust = 0.5, size = 18), 
+            axis.text = element_text(size = 13)) + 
+      ggtitle(c("PCA1", "PCA2")[i])
+    
+    # Add plot i to the list
+    plotlist.out[[i]] = plot.i
+  }
+  
+  # Assemble plots
+  plot.out = plot_grid(plot.pca, plot_grid(plotlist = plotlist.out, align = "hv"), 
+                       ncol = 1, scale = 0.9, rel_heights = c(1.3, 1))
+  
+  # - Save the plot
+  ggsave(file.out, plot.out, width = 24, height = 28, 
+         units = "cm", dpi = 600, bg = "white")
+  
+  # Return file saved 
+  return(file.out)
+  
+}
+
 
