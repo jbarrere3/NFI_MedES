@@ -150,7 +150,7 @@ list(
     title = c("Abundance of\nmedicinal plants",  "Abundance of\nedible plants", 
               "Carbon stock\n(t.ha)", "Timber volume\n(m3.ha)",
               "Erosion mitigation\n(t.ha.yr)", "Index of Biodiversity\nPotential (%)", 
-              "Climate regulation\n(degree-hour/year)"), 
+              "Micro-climate regulation\n(degree-hour/year)"), 
     type = c("capacity", "capacity", "capacity", "capacity", "flux", 
              "capacity", "flux"), 
     distrib = c("beta", "beta", "pos0", "pos0", "pos", "pos0", "norm"))),
