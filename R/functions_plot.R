@@ -125,8 +125,9 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
             legend.key = element_blank(), 
             legend.position = c(0.9, 0.5),
             legend.background = element_rect(color = '#778DA9', fill = 'white'),
-            plot.title = element_text(hjust = 0.5, size = 18), 
-            axis.text = element_text(size = 13)) + 
+            axis.text = element_blank(), 
+            axis.ticks = element_blank(),
+            plot.title = element_text(hjust = 0.5, size = 17, face = "bold")) + 
       ggtitle(service_table$title[i])
     
     # Add plot i to the list
@@ -146,234 +147,266 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
 }
 
 
-#' Function to run the first par of the analysis
-#' @param models_plot List with the models fitted at plot level
-#' @param data_services data containing all services per plot
-#' @param dir.diagnostic directory where to store diagnostic plots
-#' @param data_explanatory Explanatory variables at plot-level formatted
-#' @param file.out name of the file for the main figure
-make_plots_analysis1 = function(models_plot, service_table, data_explanatory,
-                                dir.diagnostic, file.out){
-  
-  # Create if needed directory for diagnostic plots and main plot
-  files.diagnostic = paste0(dir.diagnostic, "/diagnostic_",
-                            service_table$service, ".jpg")
-  create_dir_if_needed(files.diagnostic[1])
+#' Function to plot the correlation between ecosystem services
+#' @param NFIMed_plot Plot level NFI data
+#' @param data_services plot level ecosystem services 
+#' @param service_table table listing services name and title
+#' @param dir.out Name of the directory containing files to save, including path
+plot_pca_plot = function(
+    NFIMed_plot, data_services, data_explanatory, service_table, dir.out){
   
   
-  # Identify explanatory variables
-  terms = c()
-  for(i in 1:length(models_plot$models)) terms = c(
-    terms, attr(terms(models_plot$models[[i]]), "term.labels"))
-  terms = unique(terms)
-  explanatory_vars = terms[-unique(c(grep("2", terms), c(grep(":", terms))))]
+  # Create output directory if needed
+  create_dir_if_needed(paste0(dir.out, "/test"))
   
-  # Initialize the lists that will contain each estimate plot
-  data.stat.out = data.frame(service = character(0), var = character(0), 
-                             estimate = numeric(0), lwr = numeric(0), upr = numeric(0))
+  # Run pca with ecosystem services
+  # - Subset the dataset to be compatible with pca
+  data.pca.in = data_services %>% dplyr::select(-climregul_dh.yr) %>% drop_na()
+  # - Run pca
+  pca = prcomp(data.pca.in %>% dplyr::select(-IDP), center = T, scale = T)
+  # - Extract outputfor individual observations
+  data.pca.out = data.pca.in %>%
+    mutate(PC1 = get_pca_ind(pca)[[1]][, 1], 
+           PC2 = get_pca_ind(pca)[[1]][, 2], 
+           PC3 = get_pca_ind(pca)[[1]][, 3]) %>%
+    filter(PC3 < quantile(.$PC3, 0.999)) %>%
+    dplyr::select(IDP, PC1, PC2, PC3)
+  # - Extract output for variables
+  var_data <- as.data.frame(pca$rotation[, 1:3]) %>%
+    mutate(service = rownames(.)) %>%
+    left_join(service_table[, c("service", "title")], by = "service") %>%
+    drop_na()
+  var_percent <- pca$sdev^2 / sum(pca$sdev^2) * 100
   
-  # Add square to the explanatory variables
-  data_explanatory = data_explanatory %>% filter(ba.tot < 110)
-  for(i in 1:length(explanatory_vars)) eval(parse(text = paste0(
-    "data_explanatory$", explanatory_vars[i], "2 = data_explanatory$", 
-    explanatory_vars[i], "^2")))
+  # Prepare data for plotting
+  # - Reshape variable loadings into long format
+  var_long = pca$rotation[, 1:3] %>%
+    as.data.frame() %>%
+    mutate(service = rownames(.)) %>%
+    left_join(service_table[, c("service", "title")], by = "service") %>%
+    drop_na() %>%
+    pivot_longer(cols = c(PC1, PC2, PC3), names_to = "axis", values_to = "loading") %>%
+    mutate(axis = factor(axis, levels = c("PC1", "PC2", "PC3")))
+  # - Reshape individual coordinates into long format
+  ind_long = data.pca.out %>%
+    pivot_longer(cols = c(PC1, PC2, PC3), names_to = "axis", values_to = "coord") %>%
+    mutate(axis = factor(axis, levels = c("PC1", "PC2", "PC3")))
+  # - Percent variance per axis
+  var_percent = pca$sdev^2 / sum(pca$sdev^2) * 100
+  # - Build axis labels combining name and percent variance
+  axis_labels = c(paste0("PCA1 (", round(var_percent[1], digits = 2), "%)"),
+                  paste0("PCA2 (", round(var_percent[2], digits = 2), "%)"),
+                  paste0("PCA3 (", round(var_percent[3], digits = 2), "%)"))
+  names(axis_labels) = c("PC1", "PC2", "PC3")
   
-  # Average for each service
-  means = data_explanatory %>%
-    select(all_of(c(explanatory_vars, paste0(explanatory_vars, "2")))) %>%
-    gather(key = "var", value = "value", all_of(c(explanatory_vars, paste0(explanatory_vars, "2")))) %>%
-    group_by(var) %>%
-    summarize(mean = mean(value, na.rm = TRUE),
-              sd = sd(value, na.rm = TRUE)) %>% ungroup()
-  unscale_raw = function(x, var, means){
-    (data.frame(x = x, var = var) %>%
-       left_join(means, by = "var") %>%
-       mutate(y = x*sd + mean))$y
-  }
-  scale_raw = function(x, var, means){
-    (data.frame(x = x, var = var) %>%
-       left_join(means, by = "var") %>%
-       mutate(y = (x - mean)/sd))$y
-  }
-  scale_squared = function(x, var, means){
-    (data.frame(x = x, var = paste0(var, "2")) %>%
-       left_join(means, by = "var") %>%
-       mutate(y = (x - mean)/sd))$y
-  }
   
-  # Vector of explanatory variables not related to diversity
-  expl_notdiv = setdiff(c(explanatory_vars, paste0(
-    explanatory_vars, "2")), c("str.div", "shannon", "str.div2", "shannon2"))
-  # Prepare data for predictions
-  data_pred = expand.grid(
-    shannon = seq(from = quantile(data_explanatory$shannon, 0.10), 
-                  to = quantile(data_explanatory$shannon, 0.90), length.out = 100), 
-    str.div = quantile(data_explanatory$str.div, c(0.25, 0.5, 0.75), na.rm = TRUE)) %>%
-    mutate(shannon2 = shannon^2, str.div2 = str.div^2, 
-           shannon = scale_raw(shannon, "shannon", means), 
-           str.div = scale_raw(str.div, "str.div", means), 
-           shannon2 = scale_raw(shannon2, "shannon2", means), 
-           str.div2 = scale_raw(str.div2, "str.div2", means)) %>%
-    cbind(as.data.frame(matrix(
-      data = 0, nrow = dim(.)[1], ncol = length(expl_notdiv), 
-      dimnames = list(rownames = NULL, colnames = expl_notdiv))))
-  
-  # Loop on all services
-  for(i in 1:dim(service_table)[1]){
-    
-    # Make the estimate plot
-    data.stat.i = data.frame(service = service_table$service[i], 
-                             var = names(coefficients(models_plot$models[[i]])), 
-                             estimate = as.numeric(coefficients(models_plot$models[[i]])), 
-                             lwr = models_plot$interval[[i]][, 1], 
-                             upr = models_plot$interval[[i]][, 2]) %>%
-      filter(var != "(Intercept)")
-    
-    # Add plot i to the output dataframe
-    data.stat.out = rbind(data.stat.out, data.stat.i)
-    
-    # Initialize prediction data for service i
-    data.i = data_pred
-    eval(parse(text = paste0("data.i$", service_table$service[i], " = 0")))
-    # Get predictions
-    if(service_table$distrib[i] == "norm"){form.i = as.formula(paste(service_table$service[i], "~", paste(
-      setdiff(names(coefficients(models_plot$models[[i]])), "(Intercept)"), collapse = " + ")))
-    }else{form.i = models_plot$models[[i]]$formula}
-    # -- Generate matrix
-    X <- model.matrix(form.i, data.i)
-    # -- Extract fixed effects
-    beta = coefficients(models_plot$models[[i]])
-    # -- Extract variance covariance matrix
-    vc = vcov(models_plot$models[[i]])
-    # -- Prediction
-    pred <- X %*% beta
-    # -- Standard error of prediction
-    pred.se <- sqrt(diag(X %*% vc %*% t(X)))
-    # -- Criteria to calculate confidence interval
-    crit <- -qnorm(0.05/2)
-    # -- Calculate confidence interval
-    if(service_table$distrib[i] == "beta"){
-      data.i$fit = plogis(pred)
-      data.i$lwr = plogis(pred-crit*pred.se)
-      data.i$upr = plogis(pred+crit*pred.se)
-    }
-    if(service_table$distrib[i] == "norm"){
-      data.i$fit = pred
-      data.i$lwr = pred-crit*pred.se
-      data.i$upr = pred+crit*pred.se
-    }
-    if(!(service_table$distrib[i] %in% c("beta", "norm"))){
-      data.i$fit = exp(pred)
-      data.i$lwr = exp(pred-crit*pred.se)
-      data.i$upr = exp(pred+crit*pred.se)
-    }
-    # -- Finish formatting data for plotting
-    data.i = data.i %>% 
-      mutate(`Tree species diversity (Shannon)` = unscale_raw(shannon, "shannon", means), 
-             `Structural diversity` = case_when(
-               str.div == min(.$str.div) ~ "low (25% quantile)", 
-               str.div == max(.$str.div) ~ "high (75% quantile)", 
-               TRUE ~ "average (50% quantile)"), 
-             `title` = service_table$title[i]) %>%
-      select(all_of(c("title", "Tree species diversity (Shannon)", "Structural diversity", 
-                      "fit", "lwr", "upr")))
-    
-    # Add to the output dataframe
-    if(i == 1) data.out = data.i
-    else data.out = rbind(data.out, data.i)
-    
-    # Save diagnostic plot
-    ggsave(filename = files.diagnostic[i], plot = models_plot$diag[[i]],
-           width = 12, height = 5, dpi = 600 )
-    
-  }
-  
-  # Plot predictions
-  plot.predictions = data.out %>%
-    mutate(`Structural diversity` = factor(`Structural diversity`, levels = c(
-      "low (25% quantile)", "average (50% quantile)", "high (75% quantile)"))) %>%
-    ggplot(aes(x = `Tree species diversity (Shannon)`, 
-               colour = `Structural diversity`, 
-               fill = `Structural diversity`)) + 
-    geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.2, colour = NA) + 
-    geom_line(aes(y = fit)) + 
-    facet_wrap(~title, scales = "free_y", nrow = 2) + 
-    ylab("Service value") +
-    scale_fill_manual(values = c(`low (25% quantile)` = "#0A9396", 
-                                 `average (50% quantile)` = "#005F73", 
-                                 `high (75% quantile)` = "#001219")) + 
-    scale_color_manual(values = c(`low (25% quantile)` = "#0A9396", 
-                                  `average (50% quantile)` = "#005F73", 
-                                  `high (75% quantile)` = "#001219")) + 
-    theme(panel.background = element_rect(fill = "white", color = "black"), 
-          panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
-          strip.background = element_blank(), 
-          strip.text = element_text(size = 12, face = "bold"),
-          axis.text = element_text(size = 12), 
-          axis.title = element_text(size = 14), 
-          legend.key = element_blank(), 
-          legend.text = element_text(size = 13), 
-          legend.title = element_text(size = 13), 
-          legend.position = c(0.9, 0.2))
-  
-  # Classify explanatory vars
-  # - Diversity variables raw
-  var.div = c("shannon", "str.div", "shannon2", "str.div2")
-  # - Interactions and quadratic terms involving diversity
-  var.div.int = setdiff(terms, var.div)[which(grepl("shannon|str.div", setdiff(terms, var.div)))]
-  # - Other control variables
-  var.control = setdiff(terms, c(var.div, var.div.int))
-  
-  # Plot for fluxes
-  plot.stat = data.stat.out %>%
-    left_join(service_table %>% select(service, title), by = "service") %>%
-    mutate(var.type = case_when(
-      var %in% var.div ~ "Diversity\nvariables", 
-      var %in% var.div.int ~ "Interactions\ninvolving diversity", 
-      var %in% var.control ~ "Control\nvariables"))  %>%
-    mutate(S = case_when(lwr > 0 ~ "significantly positive\n(p < 0.05)", 
-                         upr < 0 ~ "significantly negative\n(p < 0.05)", 
-                         TRUE ~ "not-significant\n(p > 0.05)"), 
-           var.type = factor(var.type, levels = c(
-             "Diversity\nvariables",
-             "Interactions\ninvolving diversity", 
-             "Control\nvariables"))) %>%
-    ggplot(aes(x = estimate, y = var, color = S, fill = S)) +
-    geom_errorbarh(aes(xmin = lwr, xmax = upr), height = 0.2) +
-    geom_point(shape = 21) +
+  # Plot histograms of individual coordinates (top row)
+  plot.hist = ind_long %>%
+    ggplot(aes(x = coord)) +
+    geom_histogram(bins = 20, fill = "lightblue", color = "grey") +
+    facet_wrap(~ axis, nrow = 1, scales = "free",
+               labeller = labeller(axis = axis_labels)) +
+    ylab("Number of NFI plots") +
+    xlab("") +
     geom_vline(xintercept = 0, linetype = "dashed") +
-    scale_color_manual(values = c("significantly positive\n(p < 0.05)" = "#8C1C13", 
-                                  "significantly negative\n(p < 0.05)" = "#22577A", 
-                                  "not-significant\n(p > 0.05)" = "#6C757D")) +
-    scale_fill_manual(values = c("significantly positive\n(p < 0.05)" = "#BF4342", 
-                                 "significantly negative\n(p < 0.05)" = "#38A3A5", 
-                                 "not-significant\n(p > 0.05)" = "#CED4DA")) +
-    labs(x = "Standardized Estimate", y = "") +
-    facet_grid(var.type ~ title, scales = "free", space = "free_y")+
-    theme(panel.background = element_rect(fill = "white", color = "black"), 
-          panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
-          strip.background.x = element_blank(), 
-          strip.background.y = element_rect(color = "black", fill = "#FEFAE0"), 
-          strip.text.x = element_text(size = 12, face = "bold"),
-          strip.text.y = element_text(size = 13, angle = 360),
-          axis.text = element_text(size = 12), 
-          legend.title = element_blank(), 
-          legend.key = element_blank(), 
-          legend.text = element_text(size = 14), 
-          legend.position = "bottom")
+    theme(panel.background = element_rect(color = "black", fill = "white"),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_text(size = 9))
   
-  # Assemble the two plots
-  plot.out = plot_grid(
-    plot_grid((ggplot() + theme_void()), plot.predictions, nrow = 1, rel_widths = c(0.01, 1)),
-    plot.stat, nrow = 2, align = "v", scale = c(0.9, 1), labels = c("(a)", "(b)"), 
-    rel_heights = c(0.9, 1)) 
+  # Plot arrows of services on each axis (bottom row)
+  plot.var = var_long %>%
+    ggplot(aes(x = title, xend = title, y = 0, yend = loading)) +
+    geom_segment(arrow = arrow(length = unit(0.1, "cm"))) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    facet_wrap(~ axis, nrow = 1, scales = "free_x",
+               labeller = labeller(axis = axis_labels)) +
+    coord_flip() + xlab("") + ylab("") +
+    theme(panel.background = element_rect(fill = "white", color = "black"),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_text(size = 9),
+          strip.placement = "outside",
+          axis.text.y = element_text(size = 7))
   
-  # - Save the plot
-  ggsave(file.out, plot.out, width = 40, height = 33, 
-         units = "cm", dpi = 600, bg = "white")
+  # List all explanatory variables, and their titles
+  explanatory_vars = data.frame(
+    var = c("ba.tot", "dqm", "str.div", "shannon", "elev", "pca_clim"), 
+    title = c("Total\nbasal area", "Mean quadratic\ndiameter", "Structural\ndiversity", 
+              "Tree species\ndiversity", "Elevation", "Mean climate\n(Hot-dry vs cold-wet)")
+  )
   
-  # return the name of the plot exported
-  return(c(file.out, files.diagnostic))
+  
+  # Data to fit the statistical model
+  # - Format the data
+  data.model = data.pca.out %>%
+    left_join(data_explanatory, by = "IDP") %>%
+    mutate(PC1.yj = car::yjPower(.$PC1, lambda = 1.3), 
+           PC2.yj = car::yjPower(.$PC2, lambda = 1.2), 
+           PC3.yj = car::yjPower(.$PC3, lambda = -0.2))
+  
+  # - Scale explanatory variables
+  data.model_scaled = data.model
+  data.model_scaled[, explanatory_vars$var] = scale(data.model[, explanatory_vars$var], center = TRUE, scale = TRUE) 
+  
+  # Fit linear models with scaled (for estimates) and unscaled (for prediction) variables
+  # - Initialize a list that will contain the fitted models
+  list.models = vector(mode = "list", length = 3)
+  names(list.models) = c("PC1", "PC2", "PC3")
+  # - Scaled models
+  list.models$PC1 = lm(PC1.yj ~ ba.tot + dqm + str.div + shannon + elev + pca_clim, data = data.model_scaled)
+  list.models$PC2 = lm(PC2.yj ~ ba.tot + dqm + str.div + shannon + elev + pca_clim, data = data.model_scaled)
+  list.models$PC3 = lm(PC3.yj ~ ba.tot + dqm + str.div + shannon + elev + pca_clim, data = data.model_scaled)
+  
+  # Loop on all models to extract coefficients, and residuals vs fitted values
+  for(j in 1:length(names(list.models))){
+    
+    # Extract residuals vs fitted values
+    residuals.j = data.frame(residuals = residuals(list.models[[j]]), 
+                             fitted = fitted(list.models[[j]]), 
+                             PCA = names(list.models)[j])
+    
+    # Extract coefficients
+    coef.j = as.data.frame(car::Anova(list.models[[j]])) %>% 
+      mutate(PCA = names(list.models)[j], 
+             var = rownames(.)) %>% 
+      filter(var !=  "Residuals") %>% 
+      dplyr::select(`PCA`, `var`, `Fvalue` = `F value`, `p` = `Pr(>F)`) %>%
+      left_join(data.frame(var = names(coefficients(list.models[[j]])), 
+                           est = as.numeric(coefficients(list.models[[j]])), 
+                           lwr = as.numeric(confint(list.models[[j]])[, 1]), 
+                           upr = as.numeric(confint(list.models[[j]])[, 2])), 
+                by = "var") %>%
+      mutate(signif = ifelse(p < 0.05, "*", ""), 
+             pvalue = scales::pvalue(p, accuracy = 0.05, add_p = TRUE)) %>% 
+      dplyr::select(-p)
+    rownames(coef.j) = NULL
+    
+    # Also update axis labeller with R2
+    axis_labels[j] = paste0(axis_labels[j], "\nadjusted R2 = ", round(
+      summary(list.models[[j]])$adj.r.squared, digits = 2))
+    
+    # Compile into single dataframes
+    if(j == 1){
+      coef = coef.j
+      residuals = residuals.j
+    }else{
+      coef = rbind(coef, coef.j)
+      residuals = rbind(residuals, residuals.j)
+    }
+  }
+  
+  
+  # Plot estimates
+  plot.estimates = coef %>%
+    left_join(explanatory_vars, by = "var") %>%
+    ggplot(aes(x = title)) + 
+    geom_errorbar(aes(ymin = lwr, ymax = upr), color = "#4A4E69", width = 0.1) + 
+    geom_point(aes(y = est), shape = 21, fill = "lightblue", color = "#4A4E69") + 
+    xlab("") + ylab("Effect on PCA coordinate")  +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    facet_wrap(~ PCA, nrow = 1, scales = "free_x",
+               labeller = labeller(PCA = axis_labels)) +
+    coord_flip() + 
+    theme(panel.background = element_rect(fill = "white", color = "black"),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_text(size = 9),
+          strip.placement = "outside",
+          axis.text.y = element_text(size = 7))
+  
+  
+  
+  # Combine the two rows and align them vertically
+  plot.pca = plot_grid(plot.hist, plot.var, plot.estimates, ncol = 1, align = "v",
+                       rel_heights = c(1, 1, 1), labels = c("(a)", "(b)", "(c)"))
+  
+  # Save the PCA plot
+  file.mainfig = paste0(dir.out, "/fig_main_plot_analyses.jpg")
+  ggsave(file.mainfig, plot.pca, width = 19, 
+         height = 17, units = "cm", dpi = 600, bg = "white")
+  
+  
+  # Distribution of residuals
+  plot.residuals.histogram = residuals %>%
+    ggplot(aes(x = residuals))+ 
+    geom_histogram(bins = 30, color = "grey", fill = "lightblue")  + 
+    facet_wrap(~ PCA, scales = "free") +
+    theme(panel.background = element_rect(fill = "white", color = "black"),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_text(size = 9),
+          strip.placement = "outside",
+          axis.text.y = element_text(size = 7), 
+          plot.title = element_text(hjust = 0.5)) + 
+    ggtitle("Residuals distribution")
+  
+  # Residuals vs Fitted values
+  plot.residuals.fitted = residuals %>%
+    ggplot(aes(x = fitted, y = residuals)) + 
+    geom_point(alpha = 0.2) + 
+    geom_smooth(method = "loess", color = "red", se = FALSE) + 
+    geom_hline(yintercept = 0, linetype = "dashed", color = "blue") + 
+    ylab("Observed") + xlab("Predicted")  + 
+    facet_wrap(~ PCA, scales = "free") +
+    theme(panel.background = element_rect(fill = "white", color = "black"),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_text(size = 9),
+          strip.placement = "outside",
+          axis.text.y = element_text(size = 7), 
+          plot.title = element_text(hjust = 0.5)) + 
+    ggtitle("Residuals vs fitted")
+  
+  # Q-Q plot
+  plot.residuals.qqplot = residuals %>%
+    ggplot(aes(sample = residuals)) + stat_qq() + 
+    stat_qq_line(color = "red") +
+    facet_wrap(~ PCA, scales = "free") +
+    ylab("Sample quantiles") + xlab("Theoretical quantiles")  + 
+    theme(panel.background = element_rect(fill = "white", color = "black"),
+          panel.grid = element_blank(),
+          strip.background = element_blank(),
+          strip.text = element_text(size = 9),
+          strip.placement = "outside",
+          axis.text.y = element_text(size = 7), 
+          plot.title = element_text(hjust = 0.5)) + 
+    ggtitle("Q-Q plot")
+  
+  # Combine all three residuals plots
+  plot.residuals = plot_grid(plot.residuals.histogram, plot.residuals.fitted, 
+                             plot.residuals.qqplot, align = "v", 
+                             ncol = 1, labels = c("(a)", "(b)", "(c)"))
+  
+  # Save plot
+  file_fig_residuals = paste0(dir.out, "/fig_supp_residuals.jpg")
+  ggsave(file_fig_residuals, plot.residuals, width = 18, 
+         height = 18, units = "cm", dpi = 600, bg = "white")
+  
+  
+  # Prepare coefficients table for export as a tex file
+  # - Round coefficients
+  coef.tex = coef %>%
+    mutate(Fvalue = round(Fvalue, digits = 2), 
+           est = round(est, digits = 2), 
+           lwr = round(lwr, digits = 2), 
+           upr = round(upr, digits = 2))
+  # - Compile into a text easy to paste
+  text.coef = paste0(coef.tex[,1], " & ",
+                     coef.tex[,2], " & ",
+                     coef.tex[,3], " & ",
+                     coef.tex[,4], " & ",
+                     coef.tex[,5], " & ",
+                     coef.tex[,6], " & ",
+                     coef.tex[,7], " & ",
+                     coef.tex[,8], " \\")
+  # - Name of the file to save
+  file.tex = paste0(dir.out, "/coef_models_plot.txt")
+  # - Save the coefficients in the text file
+  cat(text.coef, file = file.tex, sep = "\n", append = FALSE)
+  
+  # Return file saved 
+  return(c(file.tex, file_fig_residuals, file.mainfig))
   
 }
 
@@ -472,7 +505,7 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
             legend.background = element_rect(color = '#778DA9', fill = 'white'),
             axis.text = element_blank(), 
             axis.ticks = element_blank(),
-            plot.title = element_text(hjust = 0.5, size = 18)) +
+            plot.title = element_text(hjust = 0.5, size = 17, face = "bold")) +
       annotation_custom(ggplotGrob(plot.histo.i), 
                         xmin = -5, xmax = 10, ymin = 51.5, ymax = 55) +
       ggtitle(paste0("Trend in \n", gsub("\\(.+\\)", "", service_table$title[i]),
@@ -499,7 +532,7 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
 #' @param temporal_trend estimate per service and ecoregion of the temporal trend
 #' @param data_explanatory_ser explanatory variables at ecoregion scale
 #' @param service_table table indicating the title and distribution of each service
-#' @param dir.main.out directory where to save the main figure
+#' @param dir.out directory where to save the main figure
 #' @param dir.supp.out directory where to save supplementary figures
 #' @param dir.table.out directory where to save the table of results
 make_plot_analysis_ecoregion = function(
@@ -635,7 +668,7 @@ make_plot_analysis_ecoregion = function(
   
   # Format statistical table for supplementary material
   # - File of the latex table
-  file.table.out = paste0(dir.table.out, "/table_analysis2.tex")
+  file.table.out = paste0(dir.table.out, "/table_main_analysis_trend.tex")
   # - Last formatting on the table
   table.out = stat.out %>%
     mutate(term = case_when(term == "pca" ~ "pca1_climate", 
@@ -656,7 +689,7 @@ make_plot_analysis_ecoregion = function(
   
   
   # - Save the plot
-  file.out = paste0(dir.main.out, "/fig_model2.jpg")
+  file.out = paste0(dir.main.out, "/fig_main_trends.jpg")
   ggsave(file.out, plot.out, width = 23, height = 15, 
          units = "cm", dpi = 600, bg = "white")
   
@@ -667,172 +700,9 @@ make_plot_analysis_ecoregion = function(
   
 }
 
-#' #' Analyse the drivers of temporal trens in ecosystem services
-#' #' @param temporal_trend estimate per service and ecoregion of the temporal trend
-#' #' @param data_explanatory_ser explanatory variables at ecoregion scale
-#' #' @param service_table table indicating the title and distribution of each service
-#' #' @param file.out Name of the file to save, including path
-#' make_plot_analysis2 = function(temporal_trend, data_explanatory_ser, 
-#'                                service_table, file.out){
-#'   
-#'   # Create output directory if needed
-#'   create_dir_if_needed(file.out)
-#'   
-#'   # Explanatory variables
-#'   var.expl = colnames(data_explanatory_ser)[-1]
-#'   
-#'   # Formula for model fitting
-#'   formula.in = as.formula(paste("trend ~", paste(var.expl, collapse = " + ")))
-#'   
-#'   for(i in 1:dim(service_table)[1]){
-#'     
-#'     # Prepare dataset
-#'     data.i = temporal_trend %>%
-#'       filter(service == service_table$service[i]) %>%
-#'       mutate(weight = dim(.)[1]*n/sum(n, na.rm = TRUE)) %>%
-#'       select(ecoregion, trend = estimate, weight) %>%
-#'       left_join(data_explanatory_ser, by = "ecoregion")  %>%
-#'       mutate(across(c(4:dim(.)[2]), ~ scale(., center = TRUE, scale = TRUE)[, 1]))
-#'     
-#'     # Run model
-#'     model.i = lm(formula.in, data = data.i, weights = weight)
-#'     
-#'     # Output of the model
-#'     stat.i = tidy(model.i, conf.int = TRUE) %>% 
-#'       filter(term != "(Intercept)") %>%
-#'       mutate(service = service_table$service[i]) %>% 
-#'       select(service, term, estimate, se = std.error, p.val = p.value, 
-#'              conf.low, conf.high)
-#'     
-#'     # Add to final output data
-#'     if(i == 1) out = stat.i
-#'     else out = rbind(out, stat.i)
-#'     
-#'   }
-#'   
-#'   # Create a visualization of the estimates with confidence intervals
-#'   plot.estimate.out <- out %>%
-#'     left_join(service_table %>% select(service, title), 
-#'               by = "service") %>%
-#'     mutate(S = case_when(conf.low > 0 ~ "significantly positive (p < 0.05)", 
-#'                          conf.high < 0 ~ "significantly negative (p < 0.05)", 
-#'                          TRUE ~ "not-significant (p > 0.05)"), 
-#'            title = paste0("Trend in \n", gsub("\\(.+\\)", "", title), " (%/yr)")) %>%
-#'     ggplot(aes(x = estimate, y = term, color = S, fill = S)) +
-#'     geom_errorbarh(aes(xmin = conf.low, xmax = conf.high), height = 0.2) +
-#'     geom_point(shape = 21) +
-#'     geom_vline(xintercept = 0, linetype = "dashed") +
-#'     facet_wrap(~ title, scales = "free") +
-#'     scale_color_manual(values = c("significantly positive (p < 0.05)" = "#8C1C13", 
-#'                                   "significantly negative (p < 0.05)" = "#22577A", 
-#'                                   "not-significant (p > 0.05)" = "#6C757D")) +
-#'     scale_fill_manual(values = c("significantly positive (p < 0.05)" = "#BF4342", 
-#'                                  "significantly negative (p < 0.05)" = "#38A3A5", 
-#'                                  "not-significant (p > 0.05)" = "#CED4DA")) +
-#'     labs(x = "Standardized Estimate", y = "") +
-#'     theme(legend.position = "bottom", 
-#'           panel.background = element_rect(fill = "white", color = "black"), 
-#'           panel.grid = element_line(color = "lightgrey", linetype = "dotted", linewidth = 0.5),
-#'           strip.background = element_blank(), 
-#'           legend.title = element_blank(), 
-#'           legend.key = element_blank(), 
-#'           strip.text = element_text(face = "bold", size = 12), 
-#'           legend.text = element_text(size = 14), 
-#'           axis.text = element_text(size = 12))
-#'   
-#'   # Save the plot generated
-#'   ggsave(file.out, plot.estimate.out, width = 30, height = 14, 
-#'          units = "cm", dpi = 600, bg = "white")
-#'   
-#'   # Return the files generated
-#'   return(file.out)
-#'   
-#' }
-
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 #### -- Plots for methods and supplementary ------------------
 #%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-#' Function to show the relation between each explanatory and response variables
-#' @param data_explanatory explanatory variables compiled at the plot level
-#' @param data_services dataset containing all services per plot
-#' @param service_table table attributing a title to each service
-#' @param file.out name of the file to save, including path
-plot_exploratory = function(data_explanatory, data_services, service_table, file.out){
-  
-  # Create the output directory if needed
-  create_dir_if_needed(file.out)
-  
-  # First, join the two datasets
-  combined_data <- inner_join(data_explanatory, data_services, by = "IDP")
-  
-  # Identify your explanatory and response variables
-  explanatory_vars <- c("ba.tot", "dqm", "str.div", "shannon", "richness", 
-                        "elev", "pca_clim")
-  response_vars <- service_table$service
-  
-  ## - Plot the relation between each explanatory variable and each response variable
-  
-  # Function to create binned data for one explanatory-response pair
-  create_binned_data <- function(expl_var, resp_var, data, n_bins = 10) {
-    data %>%
-      # Create equal-sized bins based on explanatory variable
-      mutate(bin = ntile(!!sym(expl_var), n_bins)) %>%
-      group_by(bin) %>%
-      summarise(
-        expl_mean = mean(!!sym(expl_var), na.rm = TRUE),
-        resp_mean = mean(!!sym(resp_var), na.rm = TRUE),
-        resp_sd = sd(!!sym(resp_var), na.rm = TRUE),
-        n = n(),
-        resp_se = resp_sd / sqrt(n)
-      ) %>%
-      mutate(
-        expl_var = expl_var,
-        resp_var = resp_var
-      )
-  }
-  
-  # Create all combinations of explanatory and response variables
-  combinations <- expand.grid(
-    explanatory = explanatory_vars,
-    response = response_vars,
-    stringsAsFactors = FALSE
-  )
-  
-  # Create binned data for all combinations
-  binned_data <- map2_df(
-    combinations$explanatory,
-    combinations$response,
-    ~ create_binned_data(.x, .y, combined_data)
-  )
-  
-  # Create the grid plot
-  plot.out <- ggplot(binned_data, aes(x = expl_mean, y = resp_mean)) +
-    geom_errorbar(aes(ymin = resp_mean - resp_sd, ymax = resp_mean + resp_sd), 
-                  width = 0, alpha = 0.5) +
-    geom_point(shape = 21, color = "black", color = "lightblue") +
-    geom_smooth(method = "loess", se = FALSE, color = "blue", size = 0.5) +
-    facet_grid(resp_var ~ expl_var, scales = "free") +
-    labs(x = "Explanatory variable (binned)", 
-         y = "Response variable mean") +
-    theme(
-      panel.background = element_rect(fill = "white", color = "black"), 
-      panel.grid = element_blank(), 
-      strip.background = element_blank(), 
-      axis.text.x = element_text(angle = 90, hjust = 1, size = 6),
-      axis.text.y = element_text(size = 6),
-      strip.text = element_text(size = 8)
-    )
-  
-  # - Save the plot
-  ggsave(file.out, plot.out, width = 19, height = 14, 
-         units = "cm", dpi = 600, bg = "white")
-  
-  # - Return the file saved
-  return(file.out)
-  
-}
-
 
 #' Function to map the main variables related to sylvoecoregions
 #' @param data_explanatory_ser explanatory variables at the ecoregion level
@@ -893,119 +763,6 @@ map_explanatory_ser = function(data_explanatory_ser, sylvoER_shp_file, file.out)
          units = "cm", dpi = 600, bg = "white")
   
   # return the name of the plot exported
-  return(file.out)
-  
-}
-
-#' Function to plot the correlation between ecosystem services
-#' @param NFIMed_plot Plot level NFI data
-#' @param data_services plot level ecosystem services 
-#' @param service_table table listing services name and title
-#' @param file.out Name of the file to save, including path
-plot_pca_services = function(NFIMed_plot, data_services, service_table, 
-                             sylvoER_shp_file, file.out){
-  
-  
-  # Create output directory if needed
-  create_dir_if_needed(file.out)
-  
-  # Run pca with ecosystem services
-  # - Subset the dataset to be compatible with pca
-  data.pca.in = data_services %>% drop_na()
-  # - Run pca
-  pca = prcomp(data.pca.in %>% dplyr::select(-IDP), center = T, scale = T)
-  # - Extract outputfor individual observations
-  data.pca.out = data.pca.in %>%
-    mutate(PC1 = get_pca_ind(pca)[[1]][, 1], 
-           PC2 = get_pca_ind(pca)[[1]][, 2]) %>%
-    select(IDP, PC1, PC2)
-  # - Extract output for variables
-  var_data <- as.data.frame(pca$rotation[, 1:2]) %>%
-    mutate(service = rownames(.)) %>%
-    left_join(service_table[, c("service", "title")], by = "service") %>%
-    drop_na()
-  var_percent <- pca$sdev^2 / sum(pca$sdev^2) * 100
-  
-  # Color vector
-  vec.col = c("#014F86", "#3D405B", "#81B29A", "#F2CC8F", "#FF99C8", "#3C6E71", 
-              "#FAA307", "#8C1C13", "#E07A5F")[c(1:dim(service_table)[1])]
-  names(vec.col) = service_table$title
-  
-  # Plot the PCA
-  plot.pca = ggplot() +
-    # Individual points
-    geom_point(data = data.pca.out, aes(x = PC1, y = PC2), color = "#0077B6", 
-               fill = "#90E0EF", shape = 21, alpha = 0.3) +
-    # Variable arrows
-    geom_segment(data = var_data, arrow = arrow(length = unit(0.2, "cm")), linewidth = 1,
-                 aes(x = 0, y = 0, xend = PC1*7, yend = PC2*7, color = title)) +
-    scale_color_manual(values = vec.col) +
-    # Axis labels with variance percentages
-    labs(x = paste0("PCA1 (", round(var_percent[1], 1), "%)"),
-         y = paste0("PCA2 (", round(var_percent[2], 1), "%)")) +
-    theme(legend.position = "top", 
-          legend.title = element_blank(), 
-          legend.key = element_blank(), 
-          panel.background = element_rect(color = 'black', fill = 'white'), 
-          panel.grid = element_blank(), 
-          axis.title = element_text(size = 18), 
-          legend.text = element_text(size = 12)) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "grey") +
-    geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
-    xlim(-5, 5) + ylim(-5, 5)
-  
-  # Average pca across sylvoecoregions
-  data_ser = NFIMed_plot %>%
-    select(IDP, ecoregion) %>%
-    left_join(data.pca.out, by = "IDP") %>%
-    drop_na() %>%
-    group_by(ecoregion) %>%
-    summarize(PC1 = mean(PC1, na.rm = TRUE), 
-              PC2 = mean(PC2, na.rm = TRUE)) %>%
-    ungroup()
-  
-  # Build dataset for plotting
-  sylvoER = read_sf(sylvoER_shp_file, crs = 2154) %>%
-    st_transform(crs = 4326) %>%
-    select(ecoregion = codeser) %>%
-    left_join(data_ser, by = "ecoregion") %>%
-    gather(key = "axis", value = "value", all_of(c("PC1", "PC2")))
-  
-  # Initialize the lists that will contain each plot
-  plotlist.out = vector(mode = "list", length = 2)
-  
-  # Loop on all services
-  for(i in 1:2){
-    plot.i = ne_countries(scale = "medium", returnclass = "sf") %>%
-      ggplot(aes(geometry = geometry)) +
-      geom_sf(fill = "#778DA9", show.legend = F, size = 0.2) + 
-      geom_sf(data = subset(sylvoER, axis == c("PC1", "PC2")[i]), 
-              aes(fill = value)) +
-      scale_fill_gradient(low = "#CCFF33", high = "#007200") +
-      coord_sf(xlim = c(-5, 10), ylim = c(41.2, 51.5)) +
-      theme(panel.background = element_rect(color = 'black', fill = 'white'), 
-            panel.grid = element_blank(), 
-            legend.title = element_blank(), 
-            legend.key = element_blank(), 
-            legend.position = c(0.9, 0.5),
-            legend.background = element_rect(color = '#778DA9', fill = 'white'),
-            plot.title = element_text(hjust = 0.5, size = 18), 
-            axis.text = element_text(size = 13)) + 
-      ggtitle(c("PCA1", "PCA2")[i])
-    
-    # Add plot i to the list
-    plotlist.out[[i]] = plot.i
-  }
-  
-  # Assemble plots
-  plot.out = plot_grid(plot.pca, plot_grid(plotlist = plotlist.out, align = "hv"), 
-                       ncol = 1, scale = 0.9, rel_heights = c(1.3, 1))
-  
-  # - Save the plot
-  ggsave(file.out, plot.out, width = 24, height = 28, 
-         units = "cm", dpi = 600, bg = "white")
-  
-  # Return file saved 
   return(file.out)
   
 }

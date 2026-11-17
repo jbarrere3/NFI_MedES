@@ -160,46 +160,34 @@ list(
     NFIMed_tree, NFIMed_plot, chelsa_prec_file, chelsa_pet_file, 
     chelsa_sgdd_file, elevation_raster)),
   tar_target(data_explanatory_ser, compile_explanatory_ser(
-    FrenchNFI_plot_raw, data_explanatory, "export/fig/supplementary/figsup_pcastr.jpg")),
+    FrenchNFI_plot_raw, data_explanatory, "export/fig_supp_pcastr.jpg")),
   tar_target(temporal_trend, get_temporal_trend(
-    data_services, NFIMed_plot, service_table, "export/fig/supplementary/trends")),
-  
-  # Fit models
-  tar_target(models_plot, fit_models_plot(
-    data_explanatory, data_services, service_table)),
-  
+    data_services, NFIMed_plot, service_table, "export/supplementary/trends")),
   
   # Plot the data
   # - Methods
   tar_target(fig_map_ser, map_explanatory_ser(
-    data_explanatory_ser, sylvoER_shp_file, "export/fig/fig_map_ser.jpg"), 
+    data_explanatory_ser, sylvoER_shp_file, "export/fig_main_map_ser.jpg"), 
     format = "file"),
   # - Main analysis
   tar_target(fig_spatial, plot_spatial_services(
     NFIMed_plot, data_services, service_table, sylvoER_shp_file, 
-    "export/fig/fig_spatial.jpg"), format = "file"), 
-  tar_target(fig_analysis1, make_plots_analysis1(
-    models_plot, service_table, data_explanatory, "export/fig/supplementary/diag1",
-    "export/fig/fig_model1.jpg"), format = "file"),
+    "export/fig_main_spatial.jpg"), format = "file"), 
+  tar_target(fig_plot_pca, plot_pca_plot(
+    NFIMed_plot, data_services, data_explanatory, service_table, "export"), format = "file"),
   tar_target(fig_map_trends, map_temporal_trend(
     temporal_trend, service_table, sylvoER_shp_file, 
-    "export/fig/fig_map_trends.jpg"), format = "file"),
+    "export/fig/fig_main_map_trends.jpg"), format = "file"),
   tar_target(fig_analysis2, make_plot_analysis_ecoregion(
     temporal_trend, data_explanatory_ser, service_table, 
-    "export/fig", "export/fig/supplementary/diag2", "export"), format = "file"),
+    "export", "export/supplementary/diag2", "export"), format = "file"),
   
   # Exports for supplementary material
-  tar_target(figsup_exploratory, plot_exploratory(
-    data_explanatory, data_services, service_table, 
-    "export/fig/supplementary/figsup_exploratory.jpg"), format = "file"), 
   tar_target(table_coef_emerge, export_emerge(
     coef_volume_file, tree.species_info, FrenchNFI_species, 
-    "export/table_coef_emerge.tex"), format = "file"), 
+    "export/table_supp_coef_emerge.tex"), format = "file"), 
   tar_target(table_sca, export_sca(
     tree.species_info, file.sca.genus, file.sca.species, NFIMed_tree, 
-    "export/table_sca.tex"), format = "file"), 
-  tar_target(fig_pca_services, plot_pca_services(
-    NFIMed_plot, data_services, service_table, sylvoER_shp_file, 
-    "export/fig/supplementary/fig_service_pca.jpg"), format = "file")
+    "export/table_supp_sca.tex"), format = "file")
   
 )
