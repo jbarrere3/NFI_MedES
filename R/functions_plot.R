@@ -91,10 +91,17 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
   
   # Average services across sylvoecoregions
   data_ser = NFIMed_plot %>%
-    select(IDP, ecoregion) %>%
+    mutate(Climate = case_when(
+      ecoregion %in% c("J10", "J21", "J22", "J23", "J24", 
+                       "J30", "J40", "K11", "K13") ~ "Mediterranean", 
+      ecoregion %in% c("H10", "H21", "H22", "H30", "H41", "H42", "K12", 
+                       "D11", "D12", "I11", "I12", "I13", "I21", "I22") ~ "Alpine",
+      TRUE ~ "Temperate"
+    )) %>%
+    select(IDP, ecoregion, Climate) %>%
     left_join(data_services, by = "IDP") %>%
     gather(key = "service", value = "value", service_table$service) %>%
-    group_by(ecoregion, service) %>%
+    group_by(ecoregion, service, Climate) %>%
     summarize(mean = mean(value, na.rm = TRUE)) %>%
     pivot_wider(names_from = "service", values_from = "mean") %>%
     ungroup()
@@ -116,9 +123,14 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
       ggplot(aes(geometry = geometry)) +
       geom_sf(fill = "#778DA9", show.legend = F, size = 0.2) + 
       geom_sf(data = subset(sylvoER, service == service_table$service[i]), 
-              aes(fill = value)) +
+              aes(fill = value, color = Climate), size = 0.5) +
+      scale_color_manual(values = c(`Alpine` = "#48CAE4", 
+                                    `Temperate` = "#6A994E", 
+                                    `Mediterranean` = "#EE964B")) +
       scale_fill_gradient(low = "#CCFF33", high = "#007200") +
-      coord_sf(xlim = c(-5, 10), ylim = c(41.2, 51.5)) +
+      coord_sf(xlim = c(-5, 10), ylim = c(41.2,
+                                          51.5)) +
+      guides(color = "none") +                 
       theme(panel.background = element_rect(color = 'black', fill = 'white'), 
             panel.grid = element_blank(), 
             legend.title = element_blank(), 
@@ -127,8 +139,8 @@ plot_spatial_services = function(NFIMed_plot, data_services, service_table,
             legend.background = element_rect(color = '#778DA9', fill = 'white'),
             axis.text = element_blank(), 
             axis.ticks = element_blank(),
-            plot.title = element_text(hjust = 0.5, size = 17, face = "bold")) + 
-      ggtitle(service_table$title[i])
+            plot.title = element_text(hjust = 0.5, size = 17)) + 
+      ggtitle(paste0("(", letters[i], ") ", service_table$title[i]))
     
     # Add plot i to the list
     plotlist.out[[i]] = plot.i
@@ -216,6 +228,7 @@ plot_pca_plot = function(
   
   # Plot arrows of services on each axis (bottom row)
   plot.var = var_long %>%
+    mutate(title = factor(title, levels = rev(service_table$title))) %>%
     ggplot(aes(x = title, xend = title, y = 0, yend = loading)) +
     geom_segment(arrow = arrow(length = unit(0.1, "cm"))) +
     geom_hline(yintercept = 0, linetype = "dashed") +
@@ -431,8 +444,9 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
     mode = "list", length = dim(service_table)[1])
   
   # Boundaries for the scale of trends
-  bound.max = round(max(abs(subset(temporal_trend, pval < 0.05 & n >= 50)$estimate)), 
-                    digits = 0) + 1
+  # bound.max = round(max(abs(subset(temporal_trend, pval_adj < 0.05 & n >= 50)$estimate)),
+  #                   digits = 0) + 1
+  bound.max = 15
   bound.min = -bound.max
   
   # Loop on all variables to plot
@@ -441,7 +455,7 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
     # Subset data for service i
     data.i = temporal_trend %>% 
       filter(service == service_table$service[i]) %>%
-      mutate(estimate = ifelse(pval < 0.05 & n >= 50, estimate, 0))
+      mutate(estimate = ifelse(pval_adj < 0.05 & n >= 50, estimate, 0))
     
     # Run a t-test to check whether the trend is sifnificantly different from 0
     test.i = t.test(data.i$estimate)
@@ -457,10 +471,10 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
       ggplot(aes(x = estimate.round, y = n, fill = estimate.round)) + 
       geom_bar(stat = "identity", aes(color = estimate.round)) + 
       scale_fill_gradient2(
-        low = '#0FA3B1', mid = 'white', high = '#CB1B16', midpoint = 0, 
+        low = '#023E8A', mid = 'white', high = '#CB1B16', midpoint = 0, 
         limits = c(bound.min, bound.max)) +
       scale_color_gradient2(
-        low = '#0FA3B1', mid = 'white', high = '#CB1B16', midpoint = 0, 
+        low = '#023E8A', mid = 'white', high = '#CB1B16', midpoint = 0, 
         limits = c(bound.min, bound.max)) +
       theme(panel.background = element_rect(color = 'black', fill = 'white'), 
             panel.grid = element_blank(), 
@@ -505,10 +519,10 @@ map_temporal_trend = function(temporal_trend, service_table, sylvoER_shp_file, f
             legend.background = element_rect(color = '#778DA9', fill = 'white'),
             axis.text = element_blank(), 
             axis.ticks = element_blank(),
-            plot.title = element_text(hjust = 0.5, size = 17, face = "bold")) +
+            plot.title = element_text(hjust = 0.5, size = 17)) +
       annotation_custom(ggplotGrob(plot.histo.i), 
                         xmin = -5, xmax = 10, ymin = 51.5, ymax = 55) +
-      ggtitle(paste0("Trend in \n", gsub("\\(.+\\)", "", service_table$title[i]),
+      ggtitle(paste0("(", letters[i], ") Trend in \n", gsub("\\(.+\\)", "", service_table$title[i]),
                      " (%/yr)"))
     
     # Add plot i to the list
@@ -767,4 +781,41 @@ map_explanatory_ser = function(data_explanatory_ser, sylvoER_shp_file, file.out)
   
 }
 
-
+#' Function to make a plot of the frequency of plant species present or not in PFAF
+plot_pfaf_freq = function(flora.species.with.score_updated, NFIMed_flora, file.out){
+  
+  # Create output directory if needed
+  create_dir_if_needed(file.out)
+  
+  # Remove NA in the score table
+  scores_nona = drop_na(flora.species.with.score_updated)
+  
+  # Cross frequency in data with presence of score in the PFAF database
+  data_flora = NFIMed_flora %>%
+    rename(species.or = species) %>%
+    group_by(species.or) %>%
+    summarize(n = n(), 
+              cover = mean(cover.mean, na.rm = TRUE)) %>%
+    mutate(freq = n/length(unique(NFIMed_flora$IDP)), 
+           score_exist = ifelse(species.or %in% scores_nona$species.or, 
+                                "Score known", 
+                                "Score unknown")) %>%
+    ungroup() %>% group_by(score_exist) %>% mutate(n_score = n()) %>% ungroup() %>%
+    mutate(score_exist = paste0(score_exist, "\n(n = ", n_score, ")"))
+  
+  # Plot the pattern
+  plot.out = data_flora %>% 
+    ggplot(aes(x = cover, y = freq)) + 
+    geom_point(alpha = 0.2) + 
+    facet_wrap(~ score_exist) + 
+    xlab("Average cover (%) when the species is observed") + 
+    ylab("Frequency in the NFI plots") + 
+    theme_bw()
+  
+  # - Save the plot
+  ggsave(file.out, plot.out, width = 15, height = 6, 
+         units = "cm", dpi = 600, bg = "white")
+  
+  # return the name of the plot exported
+  return(file.out)
+}

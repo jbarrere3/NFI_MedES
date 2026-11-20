@@ -1469,6 +1469,9 @@ get_temporal_trend = function(data_services, NFIMed_plot, service_table, dir.out
            plot.i, width = 14, height = 11, units = "cm", dpi = 600, bg = "white")
   }
   
+  # Apply a correction for the p-values 
+  out$pval_adj <- p.adjust(out$pval, method = "BH")
+  
   # Return output
   return((out %>% select(-distrib)))
   

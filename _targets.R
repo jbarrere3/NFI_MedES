@@ -177,17 +177,22 @@ list(
     NFIMed_plot, data_services, data_explanatory, service_table, "export"), format = "file"),
   tar_target(fig_map_trends, map_temporal_trend(
     temporal_trend, service_table, sylvoER_shp_file, 
-    "export/fig/fig_main_map_trends.jpg"), format = "file"),
+    "export/fig_main_map_trends.jpg"), format = "file"),
   tar_target(fig_analysis2, make_plot_analysis_ecoregion(
     temporal_trend, data_explanatory_ser, service_table, 
     "export", "export/supplementary/diag2", "export"), format = "file"),
   
   # Exports for supplementary material
+  # - Tables
   tar_target(table_coef_emerge, export_emerge(
     coef_volume_file, tree.species_info, FrenchNFI_species, 
     "export/table_supp_coef_emerge.tex"), format = "file"), 
   tar_target(table_sca, export_sca(
     tree.species_info, file.sca.genus, file.sca.species, NFIMed_tree, 
-    "export/table_supp_sca.tex"), format = "file")
+    "export/table_supp_sca.tex"), format = "file"), 
+  # - Plot of the frequency of species present or not in pfaf
+  tar_target(fig_supp_pfaf_freq, plot_pfaf_freq(
+    flora.species.with.score_updated, NFIMed_flora, "export/fig_supp_pfaf.jpg"), 
+    format = "file")
   
 )
